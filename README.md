@@ -80,6 +80,8 @@ postlite/
 
 ## Development and verification
 
+Every pull request and push to `main` runs CI (`.github/workflows/ci.yml`): `cargo test` and a release build on Windows and Ubuntu, with the binaries attached as workflow artifacts. Publishing a release stays tag-driven: push a `v*` tag (or run the Release workflow manually) to build the installers and attach them to a GitHub release.
+
 postlite is verified by driving the real app over Chrome DevTools Protocol rather than unit tests:
 
 1. Build the release binary.
