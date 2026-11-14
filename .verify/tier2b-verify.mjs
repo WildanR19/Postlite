@@ -264,6 +264,9 @@ try {
   }
 
   if (phase === 'restart') {
+    // Other suites may have closed every tab (restore-session off); the wire
+    // checks below need one active request tab.
+    await evaluate(`(() => { if (!__verify.state.tabs.some(t=>t.id===__verify.state.activeTabId && t.req)) __verify.addTab(); return true; })()`);
     await openCookies();
     await evaluate(`__verify.loadCookies()`);
     assert.equal(await rowNamed('sid', '127.0.0.1'), undefined, 'session cookie must not survive a restart');

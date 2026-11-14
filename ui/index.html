@@ -299,6 +299,31 @@
             <button class="tab" data-tab="res-headers">Headers <span class="count" id="res-headers-count"></span></button>
             <button class="tab" data-tab="tests">Tests <span class="count" id="tests-count"></span></button>
           </nav>
+          <div class="res-empty" id="res-empty">
+            <div class="res-idle">
+              <svg class="res-pulse" viewBox="0 0 132 36" aria-hidden="true">
+                <defs>
+                  <linearGradient id="lg-pulse" x1="0" y1="0" x2="1" y2="0">
+                    <stop offset="0" stop-color="#ff8352" />
+                    <stop offset=".5" stop-color="#ff6b35" />
+                    <stop offset="1" stop-color="#ff2e88" />
+                  </linearGradient>
+                </defs>
+                <path d="M6 18h34l9-11 14 22 9-11h54" fill="none" stroke="url(#lg-pulse)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+              <b>No response yet</b>
+              <span>Send a request &mdash; status, timing, and body land here.</span>
+              <span class="res-idle-kbd"><kbd>Ctrl</kbd>+<kbd>&#8629;</kbd> to send</span>
+            </div>
+            <div class="res-failed" role="alert">
+              <span class="res-failed-ic" aria-hidden="true">
+                <svg class="ic"><use href="#i-bolt" /></svg>
+              </span>
+              <b>Request failed</b>
+              <code id="res-failed-msg"></code>
+              <span>Check the URL, connection, and TLS settings, then send again.</span>
+            </div>
+          </div>
           <pre id="pretty" class="is-active" data-tab="pretty"></pre>
           <pre id="raw" data-tab="raw"></pre>
           <iframe id="preview" data-tab="preview" sandbox="" title="HTML response preview"></iframe>

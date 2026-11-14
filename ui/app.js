@@ -1768,7 +1768,8 @@ function nodeMarkup(node, depth, cid, kind = node.kind, override = null) {
   if (kind === "request") {
     return `
       <div class="node request ${active && active.id === node.id ? "is-active" : ""}"
-           data-id="${node.id}" data-cid="${cid}" data-kind="request" style="padding-left:${4 + depth * 10}px">
+           data-id="${node.id}" data-cid="${cid}" data-kind="request" draggable="true" tabindex="0" style="padding-left:${4 + depth * 10}px">
+        <span class="drag-grip" title="Drag to reorder (or Alt+Up/Down)" aria-hidden="true">${icon("grip")}</span>
         <span class="method ${esc(node.method)}">${esc(node.method)}</span>
         <span class="node-name">${esc(node.name)}</span>
         <button class="node-act" data-act="delete" title="Delete" aria-label="Delete ${esc(node.name)}">${icon("x")}</button>
@@ -1777,8 +1778,8 @@ function nodeMarkup(node, depth, cid, kind = node.kind, override = null) {
   return `
     <div class="node group ${collapsed ? "collapsed" : ""} ${selected ? "is-active" : ""}" data-id="${node.id}"
          data-cid="${cid}" data-kind="${kind}" style="--d:${depth};padding-left:${4 + depth * 10}px">
-      <div class="node-head" ${kind === "collection" ? 'draggable="true"' : ""}>
-        ${kind === "collection" ? `<span class="drag-grip" title="Drag to reorder (or Alt+Up/Down)" aria-hidden="true">${icon("grip")}</span>` : ""}
+      <div class="node-head" draggable="true">
+        <span class="drag-grip" title="Drag to reorder (or Alt+Up/Down)" aria-hidden="true">${icon("grip")}</span>
         <button type="button" class="caret" aria-expanded="${!collapsed}" aria-label="${collapsed ? "Expand" : "Collapse"} ${esc(node.name)}">${icon("caret")}</button>
         <svg class="ic folder-ic" aria-hidden="true"><use href="#i-${kind === "collection" ? "stack" : "folder"}" /></svg>
         <span class="node-name">${esc(node.name)}</span>
@@ -1991,6 +1992,18 @@ function responseCopyText() {
 
 let lastRenderedResponse;
 
+/* The response stage shows a designed idle/error card instead of an empty void.
+   Headers and Tests stay reachable on a failed request; the card only stands in
+   for the body views. */
+function syncResStage() {
+  const response = activeTab()?.response;
+  const view = $("#res-tabs .tab.is-active")?.dataset.tab;
+  const res = $("#res-pane");
+  res.classList.toggle("is-empty", !response);
+  res.classList.toggle("is-failed", !!response?.error && ["pretty", "raw", "preview"].includes(view));
+  if (response?.error) $("#res-failed-msg").textContent = response.error;
+}
+
 /* Preview tab: renders an HTML body in a fully sandboxed iframe — no scripts,
    forms, or same-origin access, so untrusted markup stays inert. Rendering is
    lazy (only while the tab is visible) and the iframe only reloads when a
@@ -2039,6 +2052,7 @@ function renderResponse() {
     $("#copy-res").hidden = true;
     renderTests([]);
     renderPreview();
+    syncResStage();
     return;
   }
   renderTests(response.results ?? []);
@@ -2054,6 +2068,7 @@ function renderResponse() {
     $("#res-headers-count").textContent = "";
     showError(response.error);
     renderPreview();
+    syncResStage();
     return;
   }
   $("#copy-res").hidden = false;
@@ -2078,6 +2093,7 @@ function renderResponse() {
     .map((h) => `<tr><td>${esc(h.key)}</td><td>${esc(shownHeader(h))}</td></tr>`)
     .join("");
   if ($("#res-tabs .tab.is-active")?.dataset.tab === "preview") renderPreview();
+  syncResStage();
 }
 
 function renderTests(results) {
@@ -2381,111 +2397,151 @@ $("#collections").addEventListener("dblclick", (event) => {
   render();
 });
 
-/* ---------------------------------------------------- collection reordering */
-/* Top-level collections drag by their head row; a live line marks the insertion
-   point. Alt+Up/Down on a focused row is the keyboard equivalent. The move is
-   expressed against the master list, so it stays well-defined while filtering. */
+/* ------------------------------------------------------------ tree reordering */
+/* Any row — collection, folder, or request — drags among its siblings; a live
+   line marks the insertion point. Alt+Up/Down on a focused row is the keyboard
+   equivalent. The move is expressed against the master array, so it stays
+   well-defined while filtering. Cross-parent moves are intentionally out of
+   scope: the drop target is always chosen from the dragged row's siblings. */
 const collectionsHost = $("#collections");
-let draggedCollectionId = null;
+let draggedNodeId = null;
+const reorderableKinds = new Set(["collection", "folder", "request"]);
 
-function topLevelCollections() {
-  return [...collectionsHost.children].filter((el) => el.dataset?.kind === "collection");
+function siblingArray(id) {
+  const walk = (items) => {
+    if (items.some((item) => item.id === id)) return items;
+    for (const item of items) {
+      const hit = item.items ? walk(item.items) : null;
+      if (hit) return hit;
+    }
+    return null;
+  };
+  return walk(state.collections);
 }
 
-function collectionDropTarget(y) {
-  const nodes = topLevelCollections();
-  if (!nodes.length) return null;
-  for (const node of nodes) {
-    const rect = node.querySelector(":scope > .node-head").getBoundingClientRect();
+function siblingRows(node) {
+  return [...node.parentElement.children].filter((el) => el.classList.contains("node") && reorderableKinds.has(el.dataset.kind));
+}
+
+const rowHead = (node) => (node.dataset.kind === "request" ? node : node.querySelector(":scope > .node-head"));
+
+function treeDropTarget(y) {
+  const source = draggedNodeId ? collectionsHost.querySelector(`.node[data-id="${draggedNodeId}"]`) : null;
+  if (!source) return null;
+  const rows = siblingRows(source);
+  if (!rows.length) return null;
+  for (const node of rows) {
+    const rect = rowHead(node).getBoundingClientRect();
     if (y < rect.top + rect.height / 2) return { node, before: true };
     if (y < rect.bottom) return { node, before: false };
   }
-  return { node: nodes[nodes.length - 1], before: false };
+  return { node: rows[rows.length - 1], before: false };
 }
 
-function showCollectionDropTarget(target) {
-  let line = $("#collection-drop-line");
+function showTreeDropTarget(target) {
+  let line = $("#tree-drop-line");
   if (!line) {
     line = document.createElement("div");
-    line.id = "collection-drop-line";
+    line.id = "tree-drop-line";
     line.className = "drop-line";
     collectionsHost.append(line);
   }
-  const top = target.before ? target.node.offsetTop : target.node.offsetTop + target.node.offsetHeight;
-  line.style.top = `${top - 1}px`;
+  // Nested rows live inside positioned .node-body wrappers, so measure against
+  // the host's viewport rect and convert to its scrolled content coordinates.
+  const hostRect = collectionsHost.getBoundingClientRect();
+  const nodeRect = target.node.getBoundingClientRect();
+  const edge = target.before ? nodeRect.top : nodeRect.bottom;
+  line.style.top = `${edge - hostRect.top + collectionsHost.scrollTop - 1}px`;
+  // Indent the line to the siblings' depth so the slot reads at the right level.
+  const indent = parseFloat(getComputedStyle(target.node).paddingLeft) || 0;
+  line.style.left = `${Math.max(6, indent)}px`;
   line.hidden = false;
 }
 
-function endCollectionDrag() {
-  draggedCollectionId = null;
-  $("#collection-drop-line")?.remove();
+function endTreeDrag() {
+  draggedNodeId = null;
+  $("#tree-drop-line")?.remove();
   for (const node of $$(".node.is-dragging", collectionsHost)) node.classList.remove("is-dragging");
 }
 
-function moveCollection(id, toIndex) {
-  const from = state.collections.findIndex((c) => c.id === id);
-  if (from < 0 || toIndex < 0 || toIndex >= state.collections.length || from === toIndex) return false;
-  const [moved] = state.collections.splice(from, 1);
-  state.collections.splice(toIndex, 0, moved);
+function moveItem(id, toIndex) {
+  const items = siblingArray(id);
+  if (!items) return false;
+  const from = items.findIndex((item) => item.id === id);
+  if (from < 0 || toIndex < 0 || toIndex >= items.length || from === toIndex) return false;
+  const [moved] = items.splice(from, 1);
+  items.splice(toIndex, 0, moved);
   persist();
   render();
-  notify(`Moved "${moved.name}" to position ${toIndex + 1} of ${state.collections.length}.`);
+  notify(`Moved "${moved.name}" to position ${toIndex + 1} of ${items.length}.`);
   return true;
 }
 
 collectionsHost.addEventListener("dragstart", (event) => {
-  const node = event.target.closest?.('.node.group[data-kind="collection"]');
-  if (!node || node.parentElement !== collectionsHost) return;
-  draggedCollectionId = node.dataset.id;
+  const node = event.target.closest?.(".node[data-id]");
+  if (!node || !reorderableKinds.has(node.dataset.kind) || !collectionsHost.contains(node)) return;
+  draggedNodeId = node.dataset.id;
   event.dataTransfer.effectAllowed = "move";
-  event.dataTransfer.setData("application/x-postlite-collection", node.dataset.id);
+  event.dataTransfer.setData("application/x-postlite-node", node.dataset.id);
   event.dataTransfer.setData("text/plain", node.dataset.id);
   requestAnimationFrame(() => node.classList.add("is-dragging"));
 });
 
 collectionsHost.addEventListener("dragover", (event) => {
-  if (!draggedCollectionId) return;
-  const target = collectionDropTarget(event.clientY);
+  if (!draggedNodeId) return;
+  const target = treeDropTarget(event.clientY);
   if (!target) return;
   event.preventDefault();
   event.dataTransfer.dropEffect = "move";
-  showCollectionDropTarget(target);
+  showTreeDropTarget(target);
 });
 
 collectionsHost.addEventListener("dragleave", (event) => {
-  if (draggedCollectionId && !collectionsHost.contains(event.relatedTarget)) {
-    const line = $("#collection-drop-line");
+  if (draggedNodeId && !collectionsHost.contains(event.relatedTarget)) {
+    const line = $("#tree-drop-line");
     if (line) line.hidden = true;
   }
 });
 
 collectionsHost.addEventListener("drop", (event) => {
-  const id = draggedCollectionId ?? event.dataTransfer.getData("application/x-postlite-collection");
+  const id = draggedNodeId ?? event.dataTransfer.getData("application/x-postlite-node");
   if (!id) return;
   event.preventDefault();
   event.stopPropagation();
-  const target = collectionDropTarget(event.clientY);
+  const target = treeDropTarget(event.clientY);
   if (target && target.node.dataset.id !== id) {
-    const rest = state.collections.filter((c) => c.id !== id);
-    let index = rest.findIndex((c) => c.id === target.node.dataset.id);
-    if (!target.before) index++;
-    moveCollection(id, index);
+    const items = siblingArray(id);
+    if (items) {
+      const rest = items.filter((item) => item.id !== id);
+      let index = rest.findIndex((item) => item.id === target.node.dataset.id);
+      if (!target.before) index++;
+      moveItem(id, index);
+    }
   }
-  endCollectionDrag();
+  endTreeDrag();
 });
 
-collectionsHost.addEventListener("dragend", endCollectionDrag);
+collectionsHost.addEventListener("dragend", endTreeDrag);
 
 collectionsHost.addEventListener("keydown", (event) => {
-  if (!event.altKey || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) return;
-  const node = event.target.closest('.node.group[data-kind="collection"]');
-  if (!node || node.parentElement !== collectionsHost) return;
-  event.preventDefault();
-  const id = node.dataset.id;
-  const from = state.collections.findIndex((c) => c.id === id);
-  const to = from + (event.key === "ArrowUp" ? -1 : 1);
-  if (moveCollection(id, to)) {
-    $(`.node[data-id="${id}"] .caret`, collectionsHost)?.focus();
+  const node = event.target.closest?.(".node[data-id]");
+  if (!node || !reorderableKinds.has(node.dataset.kind)) return;
+  if (event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
+    event.preventDefault();
+    const id = node.dataset.id;
+    const items = siblingArray(id);
+    if (!items) return;
+    const to = items.findIndex((item) => item.id === id) + (event.key === "ArrowUp" ? -1 : 1);
+    if (moveItem(id, to)) {
+      const row = $(`.node[data-id="${id}"]`, collectionsHost);
+      (row?.dataset.kind === "request" ? row : row?.querySelector(".caret"))?.focus();
+    }
+    return;
+  }
+  // Request rows are tabbable for reordering; Enter/Space keeps them openable.
+  if (node.dataset.kind === "request" && !event.ctrlKey && !event.metaKey && !event.altKey && (event.key === "Enter" || event.key === " ")) {
+    event.preventDefault();
+    node.click();
   }
 });
 
@@ -2712,6 +2768,7 @@ $("#res-tabs").addEventListener("click", (event) => {
   if (!tab) return;
   activateTab("#res-tabs .tab", "#pretty, #raw, #preview, #res-headers, .tests", tab);
   if (tab.dataset.tab === "preview") renderPreview();
+  syncResStage();
 });
 
 const rowTarget = (key) => (key === "form" ? activeReq()?.body.form : activeReq()?.[key]);
