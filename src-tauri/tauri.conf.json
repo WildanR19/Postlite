@@ -9,7 +9,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "postlite",
+        "title": "Postlite",
         "width": 1240,
         "height": 820,
         "minWidth": 1080,

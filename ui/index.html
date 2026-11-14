@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>postlite</title>
+    <title>Postlite</title>
     <script>
       // Apply the saved theme before first paint, so a light-theme user never sees a dark flash.
       try {
@@ -23,6 +23,7 @@
       <symbol id="i-folder-plus" viewBox="0 0 16 16"><path d="M2 4.2h4.4l1.2 1.6H14v7.4H2z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M8 8v3.4M6.3 9.7h3.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></symbol>
       <symbol id="i-stack" viewBox="0 0 16 16"><path d="M8 2.2 14 5l-6 2.8L2 5z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="m2 8.4 6 2.8 6-2.8M2 11.4l6 2.8 6-2.8" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></symbol>
       <symbol id="i-plus" viewBox="0 0 16 16"><path d="M8 3.4v9.2M3.4 8h9.2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></symbol>
+      <symbol id="i-star" viewBox="0 0 16 16"><path d="M8 2.4l1.7 3.5 3.8.5-2.8 2.7.7 3.8L8 11.1l-3.4 1.8.7-3.8-2.8-2.7 3.8-.5z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></symbol>
       <symbol id="i-file-plus" viewBox="0 0 16 16"><path d="M4 2.2h5.4L12.6 5.4v8.4H4z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M8.3 7v4M6.3 9h4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></symbol>
       <symbol id="i-pencil" viewBox="0 0 16 16"><path d="m3 13 .7-2.6 7-7 1.9 1.9-7 7z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="m9.6 4.4 1.9 1.9" stroke="currentColor" stroke-width="1.3"/></symbol>
       <symbol id="i-trash" viewBox="0 0 16 16"><path d="M3 4.4h10M6.4 4.4V3h3.2v1.4M4.4 4.4l.6 9h6l.6-9" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></symbol>
@@ -52,13 +53,13 @@
             <linearGradient id="lg-brand" x1="0" y1="0" x2="1" y2="1">
               <stop offset="0" stop-color="#ff8352" />
               <stop offset=".55" stop-color="#ff6b35" />
-              <stop offset="1" stop-color="#ff2e88" />
+              <stop offset="1" stop-color="#f4571f" />
             </linearGradient>
           </defs>
           <rect x="1.5" y="1.5" width="21" height="21" rx="6.5" fill="url(#lg-brand)" />
-          <path d="M5.4 12h3l1.7-4 2.6 8 1.7-4h4.2" fill="none" stroke="#16090b" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" />
+          <path d="M5.4 12h3l1.7-4 2.6 8 1.7-4h4.2" fill="none" stroke="#16090b" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" />
         </svg>
-        <h1 class="brand-name">postlite</h1>
+        <h1 class="brand-name">Postlite</h1>
       </div>
       <div class="topbar-actions">
         <span class="kbd-hint"><kbd>Ctrl</kbd>+<kbd>&#8629;</kbd> send</span>
@@ -163,6 +164,7 @@
           <button class="ctx-item" data-menu="close-others" role="menuitem">Close other tabs</button>
           <button class="ctx-item" data-menu="close-all" role="menuitem">Close all tabs</button>
         </div>
+        <div class="ctx-menu" id="coll-menu" role="menu" aria-label="Collection actions" hidden></div>
 
         <section class="workspace-empty" id="workspace-empty" aria-labelledby="workspace-empty-title" hidden>
           <div class="workspace-empty-card">
@@ -305,6 +307,19 @@
           </div>
         </section>
 
+        <div
+          class="res-resizer"
+          id="res-resizer"
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label="Resize response panel"
+          aria-valuemin="120"
+          aria-valuemax="800"
+          aria-valuenow="320"
+          tabindex="0"
+          title="Drag to resize · double-click to reset"
+        ></div>
+
         <section class="res" id="res-pane">
           <div class="res-head">
             <span class="res-title">Response</span>
@@ -410,7 +425,7 @@
       <span><b id="stat-collections">&hellip;</b> <span id="stat-collections-label">collections</span></span>
       <span><b id="stat-tabs">&hellip;</b> <span id="stat-tabs-label">open tabs</span></span>
       <span id="tool-note" class="tool-note" role="status" aria-live="polite" aria-atomic="true"></span>
-      <span class="status-right">postlite <span class="app-version">Loading…</span> &middot; local-first</span>
+      <span class="status-right">Postlite <span class="app-version">Loading…</span> &middot; local-first</span>
     </footer>
 
     <dialog id="app-settings-dialog" class="preferences" aria-labelledby="app-settings-title" aria-describedby="app-settings-description">
@@ -716,17 +731,17 @@
           </section>
 
           <section id="pref-about" role="tabpanel" class="pane" data-pane="pref-about" aria-labelledby="pref-about-title">
-            <h3 id="pref-about-title">About postlite</h3>
+            <h3 id="pref-about-title">About Postlite</h3>
             <p class="preferences-intro">A local-first desktop HTTP workspace.</p>
             <dl class="preferences-about">
               <div><dt>Application version</dt><dd><span id="app-version" class="app-version">Loading…</span></dd></div>
               <div><dt>License</dt><dd>MIT License</dd></div>
-              <div><dt>Documentation</dt><dd><a href="https://github.com/WildanR19/Postlite#readme" target="_blank" rel="noopener noreferrer">postlite README</a></dd></div>
+              <div><dt>Documentation</dt><dd><a href="https://github.com/WildanR19/Postlite#readme" target="_blank" rel="noopener noreferrer">Postlite README</a></dd></div>
             </dl>
             <div class="preferences-reset">
               <h4>Reset application settings</h4>
               <p id="settings-reset-help">Restore default preferences, including sidebar width. Your collections, environments, and saved requests are not deleted.</p>
-              <button id="settings-reset" class="tool outlined preferences-danger" type="button" aria-describedby="settings-reset-help">Reset application settings</button>
+              <button id="settings-reset" class="tool outlined" type="button" aria-describedby="settings-reset-help">Reset application settings</button>
             </div>
           </section>
         </div>
@@ -788,7 +803,7 @@
     <dialog id="curl-dialog" aria-labelledby="curl-dialog-title">
       <form method="dialog">
         <h3 id="curl-dialog-title">Import cURL</h3>
-        <p class="dialog-sub">Paste a curl command. It becomes a new request tab; flags postlite cannot express are reported, not guessed.</p>
+        <p class="dialog-sub">Paste a curl command. It becomes a new request tab; flags Postlite cannot express are reported, not guessed.</p>
         <label for="curl-input">Command
           <textarea id="curl-input" spellcheck="false" autocomplete="off" placeholder="curl -X POST 'https://api.example.com/users' -H 'Content-Type: application/json' -d '{&quot;name&quot;:&quot;rina&quot;}'"></textarea>
         </label>
@@ -827,7 +842,7 @@
       <div class="drop-card">
         <svg class="ic" aria-hidden="true"><use href="#i-import" /></svg>
         <b>Drop to import</b>
-        <span>Postman collection &middot; Postman environment &middot; postlite backup &middot; postlite settings &middot; cURL script</span>
+        <span>Postman collection &middot; Postman environment &middot; Postlite backup &middot; Postlite settings &middot; cURL script</span>
       </div>
     </div>
 

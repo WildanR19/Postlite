@@ -134,6 +134,7 @@ function newCollection(name, fields = {}) {
     variables: normRows(fields.variables),
     scripts: normScripts(fields.scripts),
     environmentId: fields.environmentId ?? null,
+    favorite: fields.favorite === true,
   };
 }
 
@@ -1090,7 +1091,7 @@ function exportSettings() {
 
 function importSettings(doc) {
   if (doc?.kind !== "postlite.settings" || doc.version !== 1 || !doc.settings || typeof doc.settings !== "object" || Array.isArray(doc.settings)) {
-    throw new Error("Not a supported postlite settings file.");
+    throw new Error("Not a supported Postlite settings file.");
   }
   state.settings = normalizeSettings(doc.settings);
   applyAppSettings();
@@ -1479,7 +1480,7 @@ function describePayload(payload) {
 
 function validateBackup(doc) {
   if (doc?.kind !== "postlite.backup" || doc.version !== 1 || !doc.payload || typeof doc.payload !== "object" || Array.isArray(doc.payload))
-    throw new Error("Not a supported postlite backup file.");
+    throw new Error("Not a supported Postlite backup file.");
   const described = describePayload(doc.payload);
   // describePayload reports counts, not the list itself.
   if (!described.workspaces) throw new Error("The backup holds no workspace data.");
@@ -1558,7 +1559,7 @@ async function confirmRestore() {
   if (mode === "replace") {
     const ok = await confirmDialogShow({
       title: "Replace everything",
-      message: `Discard the ${describePayload(workspacePayload()).summary} currently stored and use the backup instead? postlite cannot undo this.`,
+      message: `Discard the ${describePayload(workspacePayload()).summary} currently stored and use the backup instead? Postlite cannot undo this.`,
       action: "Replace",
     });
     if (!ok) return;
@@ -1692,6 +1693,13 @@ function renderSidebar() {
   else renderCollections();
 }
 
+// Favorites sort above the rest. toggleFavorite keeps them there in storage too;
+// this sort only guards collections that arrive from imports or backups.
+const orderedCollections = () => [
+  ...state.collections.filter((c) => c.favorite),
+  ...state.collections.filter((c) => !c.favorite),
+];
+
 function renderCollections() {
   const host = $("#collections");
   if (!state.collections.length) {
@@ -1705,10 +1713,10 @@ function renderCollections() {
   }
   const q = state.filter.trim().toLowerCase();
   if (!q) {
-    host.innerHTML = state.collections.map((c) => nodeMarkup(c, 0, c.id, "collection")).join("");
+    host.innerHTML = orderedCollections().map((c) => nodeMarkup(c, 0, c.id, "collection")).join("");
     return;
   }
-  const html = state.collections.map((c) => filteredMarkup(c, 0, c.id, "collection", q)).join("");
+  const html = orderedCollections().map((c) => filteredMarkup(c, 0, c.id, "collection", q)).join("");
   host.innerHTML =
     html ||
     `<div class="empty">
@@ -1805,14 +1813,16 @@ function nodeMarkup(node, depth, cid, kind = node.kind, override = null) {
       </div>`;
   }
   return `
-    <div class="node group ${collapsed ? "collapsed" : ""} ${selected ? "is-active" : ""}" data-id="${node.id}"
+    <div class="node group ${collapsed ? "collapsed" : ""} ${selected ? "is-active" : ""} ${node.favorite ? "is-favorite" : ""}" data-id="${node.id}"
          data-cid="${cid}" data-kind="${kind}" style="--d:${depth};padding-left:${4 + depth * 10}px">
       <div class="node-head" draggable="true">
         <span class="drag-grip" title="Drag to reorder (or Alt+Up/Down)" aria-hidden="true">${icon("grip")}</span>
         <button type="button" class="caret" aria-expanded="${!collapsed}" aria-label="${collapsed ? "Expand" : "Collapse"} ${esc(node.name)}">${icon("caret")}</button>
         <svg class="ic folder-ic" aria-hidden="true"><use href="#i-${kind === "collection" ? "stack" : "folder"}" /></svg>
+        ${node.favorite ? `<svg class="fav-ind" aria-hidden="true"><use href="#i-star" /></svg>` : ""}
         <span class="node-name">${esc(node.name)}</span>
         <span class="node-acts">
+          ${kind === "collection" ? `<button class="node-act" data-act="favorite" aria-pressed="${node.favorite ? "true" : "false"}" title="${node.favorite ? "Remove from favorites" : "Add to favorites"}" aria-label="${node.favorite ? "Remove from favorites" : "Add to favorites"}">${icon("star")}</button>` : ""}
           ${kind === "collection" ? `<button class="node-act" data-act="export" title="Export collection (includes secrets)" aria-label="Export collection, includes secrets">${icon("export")}</button>` : ""}
           <button class="node-act" data-act="new-request" title="New request" aria-label="New request">${icon("file-plus")}</button>
           <button class="node-act" data-act="new-folder" title="New folder" aria-label="New folder">${icon("folder-plus")}</button>
@@ -2378,6 +2388,10 @@ $("#collections").addEventListener("click", async (event) => {
   if (!node) return;
   const { id, cid, kind } = node.dataset;
 
+  if (action === "favorite" && kind === "collection") {
+    toggleFavorite(id);
+    return;
+  }
   if (action === "export" && kind === "collection") {
     await exportCollection(locateCollection(id));
     return;
@@ -2475,7 +2489,11 @@ function siblingArray(id) {
 }
 
 function siblingRows(node) {
-  return [...node.parentElement.children].filter((el) => el.classList.contains("node") && reorderableKinds.has(el.dataset.kind));
+  // Collections drag only within their own group, so favorites stay above the rest.
+  const favorite = node.dataset.kind === "collection" ? node.classList.contains("is-favorite") : null;
+  return [...node.parentElement.children].filter((el) =>
+    el.classList.contains("node") && reorderableKinds.has(el.dataset.kind)
+    && (favorite === null || el.classList.contains("is-favorite") === favorite));
 }
 
 const rowHead = (node) => (node.dataset.kind === "request" ? node : node.querySelector(":scope > .node-head"));
@@ -2586,7 +2604,11 @@ collectionsHost.addEventListener("keydown", (event) => {
     const id = node.dataset.id;
     const items = siblingArray(id);
     if (!items) return;
-    const to = items.findIndex((item) => item.id === id) + (event.key === "ArrowUp" ? -1 : 1);
+    const from = items.findIndex((item) => item.id === id);
+    const step = event.key === "ArrowUp" ? -1 : 1;
+    let to = from + step;
+    // Favorites stay above the rest, so a collection stops at its group's edge.
+    if ("favorite" in items[from]) while (items[to] && !!items[to].favorite !== !!items[from].favorite) to += step;
     if (moveItem(id, to)) {
       const row = $(`.node[data-id="${id}"]`, collectionsHost);
       (row?.dataset.kind === "request" ? row : row?.querySelector(".caret"))?.focus();
@@ -2829,6 +2851,140 @@ $("#tab-menu").addEventListener("click", (event) => {
   closeTabMenu();
 });
 
+/* ------------------------------------------------------- collection menu */
+// Right-click (or Shift+F10) on a collection opens favorite and move actions.
+// "Move to another workspace" swaps the items for a list of the other workspaces.
+let collMenuId = null;
+let collMenuOpener = null;
+let collMenuView = "main";
+
+function placeMenu(menu, x, y) {
+  const pad = 6;
+  menu.style.left = `${Math.max(pad, Math.min(x, window.innerWidth - menu.offsetWidth - pad))}px`;
+  menu.style.top = `${Math.max(pad, Math.min(y, window.innerHeight - menu.offsetHeight - pad))}px`;
+}
+
+function renderCollMenu() {
+  const menu = $("#coll-menu");
+  const collection = locateCollection(collMenuId);
+  if (!collection) return closeCollMenu();
+  if (collMenuView === "move") {
+    const others = state.workspaces.filter((ws) => ws.id !== state.activeWorkspaceId);
+    menu.innerHTML = `
+      <button class="ctx-item" data-menu="back" role="menuitem">Back</button>
+      ${others.length
+        ? others.map((ws) => `<button class="ctx-item" data-menu="move-to" data-ws="${ws.id}" role="menuitem">${esc(ws.name)}</button>`).join("")
+        : `<button class="ctx-item" role="menuitem" disabled>No other workspace</button>`}`;
+  } else {
+    menu.innerHTML = `
+      <button class="ctx-item" data-menu="favorite" role="menuitem">${collection.favorite ? "Remove from favorites" : "Add to favorites"}</button>
+      <button class="ctx-item" data-menu="move" role="menuitem">Move to another workspace</button>`;
+  }
+}
+
+function openCollMenu(id, x, y, opener) {
+  collMenuId = id;
+  collMenuOpener = opener;
+  collMenuView = "main";
+  renderCollMenu();
+  const menu = $("#coll-menu");
+  menu.hidden = false;
+  placeMenu(menu, x, y);
+  menu.querySelector(".ctx-item")?.focus();
+}
+
+function closeCollMenu() {
+  $("#coll-menu").hidden = true;
+  collMenuId = null;
+  if (collMenuOpener) { collMenuOpener.focus(); collMenuOpener = null; }
+}
+
+// Every id under a node, the node included, so open tabs and selection can be checked.
+function subtreeIds(node, out = new Set()) {
+  out.add(node.id);
+  for (const child of node.items ?? []) subtreeIds(child, out);
+  return out;
+}
+
+function toggleFavorite(id) {
+  const collection = locateCollection(id);
+  if (!collection) return;
+  const rest = state.collections.filter((c) => c !== collection);
+  collection.favorite = !collection.favorite;
+  // Favorites sit at the head of the stored array, so the saved order matches the tree.
+  rest.splice(rest.filter((c) => c.favorite).length, 0, collection);
+  state.collections.splice(0, state.collections.length, ...rest);
+  persist();
+  render();
+  notify(`${collection.favorite ? "Added" : "Removed"} "${collection.name}" ${collection.favorite ? "to" : "from"} favorites.`);
+}
+
+async function moveCollection(id, workspaceId) {
+  const collection = locateCollection(id);
+  const target = locateWorkspace(workspaceId);
+  if (!collection || !target || target.id === state.activeWorkspaceId) return;
+  const ids = subtreeIds(collection);
+  const open = state.tabs.filter((t) => t.kind !== "environment" && ids.has(t.req?.id));
+  if (open.length && !await confirmCloseTabs(open)) return;
+  const closing = new Set(open);
+  const activeClosed = closing.has(activeTab());
+  state.tabs = state.tabs.filter((t) => !closing.has(t));
+  state.collections.splice(state.collections.indexOf(collection), 1);
+  // Environments belong to a workspace, so the link cannot follow the collection.
+  collection.environmentId = null;
+  for (const nodeId of ids) state.expanded.delete(nodeId);
+  if (ids.has(state.selected?.id)) state.selected = null;
+  const at = collection.favorite ? target.collections.filter((c) => c.favorite).length : target.collections.length;
+  target.collections.splice(at, 0, collection);
+  if (activeClosed) return selectTab(state.tabs.at(-1)?.id ?? null);
+  persist();
+  render();
+  notify(`Moved "${collection.name}" to ${target.name}.`);
+}
+
+$("#collections").addEventListener("contextmenu", (event) => {
+  const node = event.target.closest('.node[data-kind="collection"]');
+  if (!node) return;
+  event.preventDefault();
+  openCollMenu(node.dataset.id, event.clientX, event.clientY, node.querySelector(".node-head .caret") ?? node);
+});
+
+$("#collections").addEventListener("keydown", (event) => {
+  if (!(event.key === "ContextMenu" || (event.shiftKey && event.key === "F10"))) return;
+  const node = event.target.closest?.('.node[data-kind="collection"]');
+  if (!node) return;
+  event.preventDefault();
+  const rect = node.querySelector(".node-head").getBoundingClientRect();
+  openCollMenu(node.dataset.id, rect.left, rect.bottom, event.target);
+});
+
+$("#coll-menu").addEventListener("keydown", (event) => {
+  const items = [...$("#coll-menu").querySelectorAll(".ctx-item:not(:disabled)")];
+  const idx = items.indexOf(document.activeElement);
+  if (event.key === "Escape") { closeCollMenu(); return; }
+  if (event.key === "ArrowDown") { event.preventDefault(); items[(idx + 1) % items.length]?.focus(); return; }
+  if (event.key === "ArrowUp") { event.preventDefault(); items[(idx - 1 + items.length) % items.length]?.focus(); return; }
+  if (event.key === "Home") { event.preventDefault(); items[0]?.focus(); return; }
+  if (event.key === "End") { event.preventDefault(); items.at(-1)?.focus(); return; }
+  if (event.key === "Tab") closeCollMenu();
+});
+
+$("#coll-menu").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-menu]");
+  if (!button || !collMenuId) return;
+  const action = button.dataset.menu;
+  const id = collMenuId;
+  if (action === "move" || action === "back") {
+    collMenuView = action === "move" ? "move" : "main";
+    renderCollMenu();
+    $("#coll-menu .ctx-item:not(:disabled)")?.focus();
+    return;
+  }
+  closeCollMenu();
+  if (action === "favorite") toggleFavorite(id);
+  else if (action === "move-to") void moveCollection(id, button.dataset.ws);
+});
+
 /* drawer entry links: clicking the open content closes it, the other swaps in place */
 for (const link of $$(".drawer-link")) {
   link.addEventListener("click", () => {
@@ -2840,6 +2996,8 @@ $("#drawer-close").addEventListener("click", closeDrawer);
 
 document.addEventListener("click", (event) => {
   if (!$("#tab-menu").hidden && !event.target.closest("#tab-menu")) closeTabMenu();
+  // composedPath, not closest: a menu click can re-render the menu, which detaches the target.
+  if (!$("#coll-menu").hidden && !event.composedPath().includes($("#coll-menu"))) closeCollMenu();
   if (!$("#ws-pop").hidden && !event.target.closest("#ws-bar")) closeWsPop();
   if (!$("#env-pop").hidden && !event.target.closest("#env-bar")) closeEnvPop();
 });
@@ -3378,6 +3536,92 @@ window.addEventListener("resize", () => {
   if (current > sidebarMax()) applySidebarWidth(current, true);
 });
 
+/* ---------------------------------------------------------- response resize */
+// Dragging the bar between request and response changes the response height,
+// the same way the sidebar edge changes the sidebar width.
+const mainEl = $(".main");
+const resPane = $("#res-pane");
+const resResizer = $("#res-resizer");
+const RESPONSE_KEY = "postlite.responseHeight";
+const RESPONSE_MIN = 120;
+const REQUEST_MIN = 160;
+const RESPONSE_DEFAULT = () => mainEl.clientHeight * 0.4;
+let resResizing = false;
+let resDragStartY = 0;
+let resDragStartH = 0;
+
+const responseMax = () => Math.max(RESPONSE_MIN, mainEl.clientHeight - 38 - 6 - REQUEST_MIN);
+
+function applyResponseHeight(height, save = false) {
+  const h = Math.round(Math.min(responseMax(), Math.max(RESPONSE_MIN, height)));
+  mainEl.style.setProperty("--res-h", `${h}px`);
+  resResizer.setAttribute("aria-valuenow", String(h));
+  resResizer.setAttribute("aria-valuemax", String(responseMax()));
+  if (save) { try { localStorage.setItem(RESPONSE_KEY, String(h)); } catch {} }
+  return h;
+}
+
+function resetResponseHeight() {
+  try { localStorage.removeItem(RESPONSE_KEY); } catch {}
+  applyResponseHeight(RESPONSE_DEFAULT());
+}
+
+let storedResponse = NaN;
+try { storedResponse = Number.parseInt(localStorage.getItem(RESPONSE_KEY) ?? "", 10); } catch {}
+applyResponseHeight(Number.isFinite(storedResponse) ? storedResponse : RESPONSE_DEFAULT());
+
+resResizer.addEventListener("pointerdown", (event) => {
+  if (event.button !== 0) return;
+  resResizing = true;
+  resDragStartY = event.clientY;
+  resDragStartH = resPane.getBoundingClientRect().height;
+  resResizer.setPointerCapture(event.pointerId);
+  resResizer.focus({ preventScroll: true });
+  document.body.classList.add("resizing-y");
+});
+
+resResizer.addEventListener("pointermove", (event) => {
+  if (!resResizing) return;
+  applyResponseHeight(resDragStartH + resDragStartY - event.clientY);
+});
+
+function endResponseResize(event) {
+  if (!resResizing) return;
+  resResizing = false;
+  document.body.classList.remove("resizing-y");
+  if (resResizer.hasPointerCapture(event.pointerId)) resResizer.releasePointerCapture(event.pointerId);
+  applyResponseHeight(parseFloat(mainEl.style.getPropertyValue("--res-h")), true);
+}
+resResizer.addEventListener("pointerup", endResponseResize);
+resResizer.addEventListener("pointercancel", endResponseResize);
+resResizer.addEventListener("dblclick", resetResponseHeight);
+
+resResizer.addEventListener("keydown", (event) => {
+  const current = Math.round(resPane.getBoundingClientRect().height);
+  const step = event.shiftKey ? 48 : 16;
+  if (event.key === "ArrowUp") {
+    event.preventDefault();
+    applyResponseHeight(current + step, true);
+  } else if (event.key === "ArrowDown") {
+    event.preventDefault();
+    applyResponseHeight(current - step, true);
+  } else if (event.key === "Home") {
+    event.preventDefault();
+    applyResponseHeight(RESPONSE_MIN, true);
+  } else if (event.key === "End") {
+    event.preventDefault();
+    applyResponseHeight(responseMax(), true);
+  } else if (event.key === "Enter") {
+    event.preventDefault();
+    resetResponseHeight();
+  }
+});
+
+window.addEventListener("resize", () => {
+  const current = parseFloat(mainEl.style.getPropertyValue("--res-h"));
+  if (Number.isFinite(current)) applyResponseHeight(current);
+});
+
 $("#import-btn").addEventListener("click", () => $("#import-file").click());
 $("#empty-import").addEventListener("click", () => $("#import-file").click());
 $("#workspace-empty").addEventListener("click", (event) => {
@@ -3465,7 +3709,7 @@ async function importDroppedFiles(files) {
         continue;
       }
       if (doc !== null) {
-        failures.push(`${file.name}: unrecognized JSON (expected a Postman export or a postlite backup/settings file)`);
+        failures.push(`${file.name}: unrecognized JSON (expected a Postman export or a Postlite backup/settings file)`);
         continue;
       }
       if (looksLikeCurl(trimmed)) {
@@ -3886,6 +4130,7 @@ document.addEventListener("keydown", (event) => {
   if ($("dialog[open]:not(#drawer)")) return;
   if (event.key === "Escape" && !$("#var-overlay").hidden) closeVarOverlay();
   else if (event.key === "Escape" && !$("#tab-menu").hidden) closeTabMenu();
+  else if (event.key === "Escape" && !$("#coll-menu").hidden) closeCollMenu();
   else if (event.key === "Escape" && drawer.open) { event.preventDefault(); closeDrawer(); }
   else if (event.key === "Escape" && !$("#ws-pop").hidden) closeWsPop({ restoreFocus: true });
   else if (event.key === "Escape" && !$("#env-pop").hidden) closeEnvPop({ restoreFocus: true });

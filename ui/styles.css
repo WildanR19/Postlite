@@ -547,7 +547,7 @@ kbd {
   left: 3px;
   width: 2px;
   border-radius: 2px;
-  background: transparent;
+  background: color-mix(in srgb, var(--fg) 22%, transparent);
   transition: background var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease);
 }
 
@@ -576,6 +576,49 @@ body.resizing .sidebar-resizer::after {
 }
 
 .shell.rail-collapsed .sidebar-resizer {
+  display: none;
+}
+
+/* Horizontal bar between request and response; the response height lives in --res-h. */
+.res-resizer {
+  position: relative;
+  height: 6px;
+  cursor: row-resize;
+  touch-action: none;
+  outline: none;
+}
+
+.res-resizer::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 2px;
+  height: 2px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--fg) 22%, transparent);
+  transition: background var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease);
+}
+
+.res-resizer:hover::after,
+.res-resizer:focus-visible::after {
+  background: var(--cyan);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--cyan) 35%, transparent);
+}
+
+body.resizing-y,
+body.resizing-y * {
+  cursor: row-resize !important;
+  user-select: none;
+}
+
+body.resizing-y .res-resizer::after {
+  background: var(--accent);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 50%, transparent);
+}
+
+.main.no-tabs .res-resizer,
+.main.settings-open .res-resizer {
   display: none;
 }
 
@@ -820,6 +863,22 @@ button.link:hover {
   color: var(--err);
 }
 
+.node-act[data-act="favorite"][aria-pressed="true"] {
+  color: var(--fg);
+}
+
+/* Favorite marker: always visible, filled, so pinned collections read at a glance. */
+.fav-ind {
+  width: 11px;
+  height: 11px;
+  flex: none;
+  color: var(--dim);
+}
+
+.fav-ind path {
+  fill: currentColor;
+}
+
 .node.request .node-act {
   visibility: hidden;
 }
@@ -1021,8 +1080,8 @@ button.link:hover {
 }
 
 .method.POST {
-  color: var(--accent-hi);
-  background: color-mix(in srgb, var(--accent) 13%, transparent);
+  color: var(--fg);
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
 }
 
 .method.PUT {
@@ -1060,7 +1119,7 @@ button.link:hover {
 .main {
   position: relative;
   display: grid;
-  grid-template-rows: 38px auto 1fr;
+  grid-template-rows: 38px minmax(0, 1fr) 6px var(--res-h, 40%);
   min-height: 0;
   min-width: 0;
   transition: padding-right var(--t-med) var(--ease);
@@ -1147,6 +1206,12 @@ button.link:hover {
 
 .tabbar::-webkit-scrollbar {
   height: 0;
+}
+
+/* The tabbar stretches children, but icon-btn keeps its 26px height, so pin it to the centre line. */
+.tabbar > .icon-btn {
+  align-self: center;
+  flex: none;
 }
 
 .tab-dirty {
@@ -1286,9 +1351,21 @@ button.link:hover {
   color: var(--cyan);
 }
 
+.ctx-item:disabled {
+  color: var(--faint);
+  cursor: not-allowed;
+}
+
+.ctx-item:disabled:hover {
+  background: transparent;
+  color: var(--faint);
+}
+
 /* ----------------------------------------------------------------- request */
 
 .req {
+  min-height: 0;
+  overflow: auto;
   border-bottom: 1px solid var(--line);
   background: linear-gradient(180deg, rgba(var(--surface-rgb), 0.6), transparent 120px);
 }
@@ -1325,10 +1402,10 @@ button.link:hover {
   align-items: center;
   gap: 4px;
   padding: 4px 6px;
-  border: 1px solid color-mix(in srgb, var(--cyan) 35%, transparent);
+  border: 1px solid color-mix(in srgb, var(--cyan) 55%, transparent);
   border-radius: var(--r-s);
   background: color-mix(in srgb, var(--cyan) 12%, transparent);
-  color: var(--cyan);
+  color: var(--cyan-hi);
   font: 600 10.5px/1 var(--mono);
   cursor: pointer;
   transition: background var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease);
@@ -1486,7 +1563,7 @@ button.link:hover {
 }
 
 #method[data-method="GET"] { color: var(--ok); }
-#method[data-method="POST"] { color: var(--accent-hi); }
+#method[data-method="POST"] { color: var(--fg); }
 #method[data-method="PUT"] { color: var(--info); }
 #method[data-method="PATCH"] { color: var(--violet); }
 #method[data-method="DELETE"] { color: var(--err); }
@@ -1500,7 +1577,7 @@ select option {
 }
 
 #method option[value="GET"] { color: var(--ok); }
-#method option[value="POST"] { color: var(--accent-hi); }
+#method option[value="POST"] { color: var(--fg); }
 #method option[value="PUT"] { color: var(--info); }
 #method option[value="PATCH"] { color: var(--violet); }
 #method option[value="DELETE"] { color: var(--err); }
