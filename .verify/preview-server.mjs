@@ -21,7 +21,7 @@ window.__TAURI__ = (() => {
         const body = JSON.stringify({ method: r.method, url: r.url, headers: Object.fromEntries(r.headers.map((h) => [h.key, h.value])), body: (() => { try { return r.body ? JSON.parse(r.body) : null; } catch { return r.body; } })(), items: [{ id: 1, name: "Kopi susu", price: 18000, stock: 24 }, { id: 2, name: "Matcha latte", price: 22000, stock: 9 }], page: 1, total: 2 }, null, 2);
         return { status: 200, status_text: "OK", elapsed_ms: 142, size_bytes: body.length, truncated: false, headers: [{ key: "content-type", value: "application/json; charset=utf-8" }, { key: "x-request-id", value: "req-8f3a2c" }, { key: "cache-control", value: "no-store" }], body };
       }
-      case "cookie_list": return [];
+      case "cookie_list": return { rows: [], note: null, persisting: true };
       case "cookie_delete": return 0;
       case "cookie_purge": return null;
       case "cookie_set_persist": return null;

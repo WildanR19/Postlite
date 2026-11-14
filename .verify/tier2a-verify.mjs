@@ -76,9 +76,21 @@ try {
     v.addTab(structuredClone(v.state.collections[0].items[0]));
     v.persist();
     window.__downloads = [];
-    HTMLAnchorElement.prototype.click = function () {
-      const name = this.download;
-      window.__downloads.push(fetch(this.href).then(r => r.json()).then(data => ({ name, data })));
+    window.__exportCancel = false;
+    // Tauri's invoke/ipc properties are non-writable; the fetch-based custom
+    // protocol IPC is the writable seam. A ok/json Response resolves invoke.
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = (input, init) => {
+      const url = typeof input === 'string' ? input : input.url;
+      if (url.endsWith('/save_export_file')) {
+        const args = JSON.parse(init.body);
+        const respond = (value) => Promise.resolve(new Response(JSON.stringify(value), { status: 200, headers: { 'content-type': 'application/json', 'Tauri-Response': 'ok' } }));
+        if (window.__exportCancel) return respond(null);
+        let data; try { data = JSON.parse(args.contents); } catch { data = args.contents; }
+        window.__downloads.push(Promise.resolve({ name: args.defaultName, data }));
+        return respond('C:/exports/' + args.defaultName);
+      }
+      return originalFetch(input, init);
     };
     window.__clipboard = '';
     navigator.clipboard.writeText = async (text) => { window.__clipboard = text; };
@@ -113,6 +125,9 @@ try {
   await wait(`document.querySelector('#tool-note').textContent.includes('Snippet copied')`, 'copy never reported');
   await check('the note names the resolved values and the real command length',
     `(() => { const n=document.querySelector('#tool-note').textContent; const m=n.match(/\\((\\d+) characters/); return n.includes('variables resolved') && m && Number(m[1])===window.__clipboard.length; })()`);
+  await click('#code-export');
+  await check('snippet export saves through the native dialog with the right extension',
+    `(async()=>{await new Promise(r=>setTimeout(r,50)); const d=(await Promise.all(__downloads)).at(-1); return d.name==='postlite-request.sh' && d.data.includes('curl');})()`);
 
   const clipboardBefore = await evaluate('window.__clipboard');
   await setUrl('');
@@ -231,13 +246,14 @@ try {
   await wait(`document.querySelector('#confirm-dialog').open`, 'backup confirm never opened');
   await check('backup export warns about secrets before writing',
     `document.querySelector('#confirm-title').textContent==='Export full backup' && document.querySelector('#confirm-message').textContent.includes('secret variables') && document.querySelector('#confirm-ok').textContent==='Export backup'`);
+  await evaluate(`window.__dlBefore=__downloads.length`);
   await evaluate(`document.querySelector('#confirm-dialog').close('cancel')`);
   await check('cancelling the backup writes no file',
-    `(async()=>{await new Promise(r=>setTimeout(r,250)); return (await Promise.all(__downloads)).length===0;})()`);
+    `(async()=>{await new Promise(r=>setTimeout(r,250)); return (await Promise.all(__downloads)).length===window.__dlBefore;})()`);
   await click('#settings-export-backup');
   await wait(`document.querySelector('#confirm-dialog').open`, 'second confirm never opened');
   await click('#confirm-ok');
-  await wait(`__downloads.length>0`, 'no backup downloaded');
+  await wait(`__downloads.length>window.__dlBefore`, 'no backup downloaded');
   await check('backup file holds every workspace, its data, and preferences',
     `(async () => { const file=(await Promise.all(__downloads)).at(-1); return file.name.startsWith('postlite.backup.') && file.name.endsWith('.json') && file.data.kind==='postlite.backup' && file.data.version===1 && file.data.exportedAt && file.data.payload.workspaces.length===2 && file.data.payload.workspaces.map(w=>w.name).join()==='WS A,WS B' && file.data.payload.workspaces[0].collections[0].name==='Alpha' && file.data.payload.workspaces[1].collections[0].name==='Beta' && file.data.payload.workspaces[0].tabs.length>0 && file.data.payload.settings.response.jsonIndent==='tab'; })()`);
   const backup = await evaluate(`(async()=>JSON.stringify((await Promise.all(__downloads)).at(-1).data))()`);

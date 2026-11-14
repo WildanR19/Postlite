@@ -15,7 +15,7 @@ const until=expr=>`new Promise((resolve,reject)=>{const start=Date.now();const t
 try{
  await reload();
  await check('edge checks use isolated storage',`(await __TAURI__.path.appDataDir()).includes('app.postlite.tier1verify20261110')`);
- await evaluate(`window.__errors=[];window.addEventListener('error',e=>__errors.push(e.message));window.__downloads=[];HTMLAnchorElement.prototype.click=function(){__downloads.push(fetch(this.href).then(r=>r.json()));};`);
+ await evaluate(`window.__errors=[];window.addEventListener('error',e=>__errors.push(e.message));window.__downloads=[];window.__exportCancel=false;const originalFetch=window.fetch.bind(window);window.fetch=(input,init)=>{const url=typeof input==='string'?input:input.url;if(url.endsWith('/save_export_file')){const args=JSON.parse(init.body);const respond=value=>Promise.resolve(new Response(JSON.stringify(value),{status:200,headers:{'content-type':'application/json','Tauri-Response':'ok'}}));if(window.__exportCancel)return respond(null);let data;try{data=JSON.parse(args.contents);}catch{data=args.contents;}window.__downloads.push(Promise.resolve({name:args.defaultName,data}));return respond('C:/exports/'+args.defaultName);}return originalFetch(input,init);};`);
  await cmd('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]});
  await evaluate(`__verify.openAppSettings()`);
  await set('general.theme','light');
@@ -84,7 +84,7 @@ try{
  await evaluate(`__verify.openAppSettings()`);
  await click('#app-settings-tabs [data-tab="pref-transfer"]');
  await click('#settings-export-environment');
- await check('environment export preserves secret metadata',`(await Promise.all(__downloads)).at(-1).values[0].type==='secret'`);
+ await check('environment export preserves secret metadata',`(await Promise.all(__downloads)).at(-1).data.values[0].type==='secret'`);
  await click('#save-workspace-now');
  await check('modal save-now displays completion',until(`document.querySelector('#preferences-message').textContent==='Workspace saved.'`));
  await set('general.restoreLastSession',true);

@@ -17,14 +17,14 @@ A lightweight desktop HTTP client built with [Tauri v2](https://tauri.app) + Rus
 - **Variables** — `{{token}}` interpolation with collection, folder, and environment scopes. Precedence is `collection < environment < folder`. A peek overlay under the URL bar resolves each token and names the scope it came from. Values can be flagged **secret** and are masked in the UI (raw values are still sent).
 - **Environments** — managed in their own sidebar tab, scoped per workspace, bound to a collection through the selector in the top bar (next to **Import**). Bindings persist per collection.
 - **Scripts** — pre-request and test scripts run against a minimal `pm` sandbox (`pm.request`, `pm.response`, and variables); results appear in the response Tests tab.
-- **Settings** — a global preferences dialog (open with `Ctrl+,`) covers theme (light / dark / system), auto-save and session restore, request defaults (timeout, redirect policy, TLS verification, cache, response size cap), the Cookies and Proxy groups, response view options (default tab, syntax highlighting, JSON indent, word wrap), privacy masking, the fixed keyboard shortcuts, and reset. Values live in `workspace.json` under `settings`, and the whole block can be exported or imported as JSON.
-- **Persistence** — collections, tabs, environments, and settings are saved to a single JSON file in the OS app-data directory. **Import / Export** in settings can also write that whole state to one `postlite.backup` file and read it back, either merged beside the workspaces you already have or replacing them (replace confirms twice and restores the backup's preferences). Cookie jars and proxy credentials are deliberately excluded from backups.
+- **Settings** — a global preferences dialog (open with `Ctrl+,`) covers theme (light / dark / system), auto-save and session restore, request defaults (timeout, redirect policy, TLS verification, cache, response size cap), the Cookies and Proxy groups, response view options (default tab, syntax highlighting, JSON indent, word wrap), privacy masking, the fixed keyboard shortcuts, and reset. A search bar at the top (`Ctrl+F` or `/` while the dialog is open) filters settings live across every section, badges each category with its match count, and jumps to the first section with a hit; `Escape` clears the query before it closes the dialog. Values live in `workspace.json` under `settings`, and the whole block can be exported or imported as JSON.
+- **Persistence** — collections, tabs, environments, and settings are saved to a single JSON file in the OS app-data directory. **Import / Export** in settings can also write that whole state to one `postlite.backup` file and read it back, either merged beside the workspaces you already have or replacing them (replace confirms twice and restores the backup's preferences). Every export (collection, environment, settings, backup, code snippet) opens the native Save As dialog first, so you choose the folder and file name; the status line reports the path written, and cancelling writes nothing. Cookie jars and proxy credentials are deliberately excluded from backups.
 - **Privacy masking** — sensitive headers (`Authorization`, `Cookie`, anything named token/secret/key) are masked in the request header grid, the response header table, and the Auth tab, with a per-row reveal; secret variables are masked in editors and the peek overlay. Masking is display-only: everything that leaves the app (send, copy, export, generated code) carries the real values. Both masks can be switched off in Settings → Privacy.
 
 ## Tech stack
 
 - **Tauri v2** for the native shell and IPC.
-- **Rust** backend: `reqwest` for HTTP, `cookie_store` for the jar, `aes-gcm` + `keyring` for encrypted cookie/credential storage, `serde`/`serde_json` for the workspace file. Commands: `http_send`, `load_workspace`, `save_workspace`, `cookie_list` / `cookie_delete` / `cookie_purge` / `cookie_set_persist`, and `proxy_credentials_set` / `proxy_credentials_get`.
+- **Rust** backend: `reqwest` for HTTP, `cookie_store` for the jar, `aes-gcm` + `keyring` for encrypted cookie/credential storage, `serde`/`serde_json` for the workspace file, `rfd` for the native Save As dialog. Commands: `http_send`, `load_workspace`, `save_workspace`, `cookie_list` / `cookie_delete` / `cookie_purge` / `cookie_set_persist`, `proxy_credentials_set` / `proxy_credentials_get`, and `save_export_file`.
 - **Static frontend** in plain HTML/CSS/JS (`ui/`) — no bundler, no npm dependencies.
 
 ## Requirements
@@ -99,12 +99,12 @@ postlite is verified by driving the real app over Chrome DevTools Protocol rathe
 The settings and interop harnesses use a separate debug build so they can never touch a real workspace: set `identifier` to `app.postlite.tier1verify20261110` and add `build.devUrl` `http://127.0.0.1:8100` in `src-tauri/tauri.conf.json` while building it, then revert both. `node .verify/tier1-server.mjs` serves the UI (plus a self-signed TLS endpoint) on `127.0.0.1:8100`/`8101` with a `window.__verify` hook, and the app is launched with `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9235`. Run:
 
 ```sh
-node .verify/tier1-verify.mjs     # preferences, masking, export warnings (60 checks)
+node .verify/tier1-verify.mjs     # preferences, settings search, native export, masking (75 checks)
 node .verify/tier1-edge.mjs       # restart, restore-session, legacy migration (25)
 node .verify/tier1-close.mjs      # autosave on window close (closes the app)
 node .verify/tier2a-codegen.mjs   # cURL/code logic, no browser needed (20)
 node .verify/tier2a-execute.mjs   # generated snippets run against a live fixture
-node .verify/tier2a-verify.mjs    # Code drawer, cURL import, backup/restore in the app (48)
+node .verify/tier2a-verify.mjs    # Code drawer, cURL import, backup/restore in the app (49)
 node .verify/tier2b-verify.mjs    # cookies, masking, proxy on the wire (36)
 # then restart the isolated app and run:
 node .verify/tier2b-verify.mjs --after-restart   # session gone, persistent back (5)

@@ -17,7 +17,24 @@ try {
     const v=__verify; v.state.collections=[]; v.state.environments=[]; v.state.tabs=[]; v.state.activeTabId=null;
     v.state.settings=v.normalizeSettings(); v.applyAppSettings(); v.persist();
     window.__downloads=[];
-    HTMLAnchorElement.prototype.click=function(){const name=this.download; window.__downloads.push(fetch(this.href).then(r=>r.json()).then(data=>({name,data})));};
+    window.__nativeSaves=[];
+    window.__exportCancel=false;
+    // Tauri's invoke/ipc properties are non-writable; the fetch-based custom
+    // protocol IPC is the writable seam. A ok/json Response resolves invoke.
+    const originalFetch=window.fetch.bind(window);
+    window.fetch=(input,init)=>{
+      const url=typeof input==='string'?input:input.url;
+      if(url.endsWith('/save_export_file')){
+        const args=JSON.parse(init.body);
+        window.__nativeSaves.push(args);
+        const respond=value=>Promise.resolve(new Response(JSON.stringify(value),{status:200,headers:{'content-type':'application/json','Tauri-Response':'ok'}}));
+        if(window.__exportCancel) return respond(null);
+        let data; try{data=JSON.parse(args.contents);}catch{data=args.contents;}
+        window.__downloads.push(Promise.resolve({name:args.defaultName,data}));
+        return respond('C:/exports/'+args.defaultName);
+      }
+      return originalFetch(input,init);
+    };
     window.__clipboard=''; navigator.clipboard.writeText=async text=>window.__clipboard=text;
     window.__runtimeErrors=[]; window.addEventListener('error', e=>__runtimeErrors.push(e.message));
   })()`);
@@ -29,6 +46,34 @@ try {
     await click(`#app-settings-tabs [data-tab="pref-${category}"]`);
     await check(`category ${category} opens corresponding pane`, `document.querySelector('#app-settings-dialog .pane.is-active').dataset.pane==='pref-${category}'`);
   }
+  const typeSearch = (q) => evaluate(`(() => {const s=document.querySelector('#pref-search'); s.value=${JSON.stringify(q)}; s.dispatchEvent(new Event('input',{bubbles:true})); return true;})()`);
+  await typeSearch('proxy');
+  await check('search jumps to first matching section and filters rows', `document.querySelector('#app-settings-dialog .pane.is-active').dataset.pane==='pref-request' && !document.querySelector('#pref-proxy-mode').closest('fieldset').hidden && document.querySelector('#pref-defaultMethod').closest('.preferences-row').hidden`);
+  await check('search badges and status count matches', `document.querySelector('#app-settings-tabs [data-tab="pref-request"] .pref-count').textContent==='1' && document.querySelector('#app-settings-tabs [data-tab="pref-general"]').classList.contains('pref-no-match') && document.querySelector('#pref-search-status').textContent==='1 result in 1 section'`);
+  await typeSearch('autoSaveIntervalMs');
+  await check('search matches setting keys and control ids', `document.querySelector('#app-settings-dialog .pane.is-active').dataset.pane==='pref-general' && !document.querySelector('#pref-autoSaveIntervalMs').closest('.preferences-row').hidden && document.querySelector('#pref-theme').closest('.preferences-row').hidden`);
+  await typeSearch('full backup');
+  await check('search covers transfer fieldsets', `document.querySelector('#app-settings-dialog .pane.is-active').dataset.pane==='pref-transfer' && !document.querySelector('#settings-export-backup').closest('fieldset').hidden && document.querySelector('#settings-export-collection').closest('fieldset').hidden`);
+  await typeSearch('send request');
+  await check('search covers shortcut entries', `document.querySelector('#app-settings-dialog .pane.is-active').dataset.pane==='pref-shortcuts' && [...document.querySelectorAll('#pref-shortcuts .preferences-shortcuts > div')].filter(d=>!d.hidden).length===1`);
+  await typeSearch('zzz-no-match');
+  await check('no-match search shows empty state and hides panes', `!document.querySelector('#pref-search-empty').hidden && document.querySelector('#pref-search-empty-query').textContent==='zzz-no-match' && [...document.querySelectorAll('#app-settings-dialog .pane')].every(p=>p.hidden) && document.querySelector('#pref-search-status').textContent==='No results'`);
+  await click('#pref-search-clear');
+  await check('clear restores rows, badges and panes', `document.querySelector('#pref-search').value==='' && document.querySelector('#pref-search-empty').hidden && [...document.querySelectorAll('#app-settings-dialog .pane')].every(p=>!p.hidden) && [...document.querySelectorAll('#app-settings-dialog .pref-count')].every(b=>b.hidden) && !document.querySelector('#app-settings-dialog').classList.contains('is-searching')`);
+  await cmd('Input.dispatchKeyEvent',{type:'keyDown',key:'f',code:'KeyF',modifiers:2});
+  await check('Ctrl+F focuses settings search', `document.activeElement.id==='pref-search'`);
+  await typeSearch('theme');
+  await cmd('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
+  await check('Escape clears query before closing dialog', `document.querySelector('#app-settings-dialog').open && document.querySelector('#pref-search').value===''`);
+  await cmd('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
+  await check('second Escape closes settings', `!document.querySelector('#app-settings-dialog').open`);
+  await click('#open-app-settings');
+  await cmd('Input.dispatchKeyEvent',{type:'keyDown',key:'/',code:'Slash',windowsVirtualKeyCode:191});
+  await check('slash focuses settings search', `document.activeElement.id==='pref-search'`);
+  await typeSearch('theme');
+  await click('#app-settings-close');
+  await click('#open-app-settings');
+  await check('search resets when dialog reopens', `document.querySelector('#pref-search').value==='' && [...document.querySelectorAll('#app-settings-dialog .preferences-row')].every(r=>!r.hidden)`);
   await click('#app-settings-tabs [data-tab="pref-general"]');
   await set('general.theme','light');
   await check('light theme applied and persisted', `document.documentElement.dataset.theme==='light' && __verify.state.settings.general.theme==='light'`);
@@ -71,6 +116,12 @@ try {
   await click('#app-settings-tabs [data-tab="pref-transfer"]');
   await click('#settings-export');
   await check('settings export contains preferences only', `(async()=>{const file=await Promise.all(__downloads);const doc=file.at(-1).data;window.__settingsExport=doc;return doc.kind==='postlite.settings' && doc.version===1 && !doc.workspaces && !doc.collections && JSON.stringify(doc.settings)===JSON.stringify(__verify.state.settings);})()`);
+  await check('export uses the native save command with a JSON filter', `window.__nativeSaves.at(-1).defaultName==='postlite.settings.json' && window.__nativeSaves.at(-1).filterName==='JSON' && window.__nativeSaves.at(-1).extensions.join(',')==='json'`);
+  await check('chosen path is reported in the settings footer', `document.querySelector('#preferences-message').textContent.includes('C:/exports/postlite.settings.json')`);
+  await evaluate(`window.__exportCancel=true`);
+  await click('#settings-export');
+  await check('cancelled save reports cancellation without a file', `(async()=>{await new Promise(r=>setTimeout(r,50));return document.querySelector('#preferences-message').textContent==='Settings export cancelled.';})()`);
+  await evaluate(`window.__exportCancel=false`);
   await set('general.theme','light');
   await evaluate(`__verify.importSettings(__settingsExport)`);
   await check('settings import identity and immediate application', `JSON.stringify(__verify.state.settings)===JSON.stringify(__settingsExport.settings) && document.documentElement.dataset.theme==='dark'`);

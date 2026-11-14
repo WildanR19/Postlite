@@ -599,10 +599,13 @@ function switchWorkspace(id) {
 
 const confirmDialog = $("#confirm-dialog");
 
-function confirmDialogShow({ title, message, action = "Delete" }) {
+function confirmDialogShow({ title, message, action = "Delete", danger = true }) {
   $("#confirm-title").textContent = title;
   $("#confirm-message").textContent = message;
   $("#confirm-ok").textContent = action;
+  // Red is reserved for actions that lose data; Export and settings-reset confirm in neutral chrome.
+  $("#confirm-ok").classList.toggle("danger", danger);
+  $("#confirm-dialog .confirm-icon").hidden = !danger;
   if (confirmDialog.open) return Promise.resolve(false);
   confirmDialog.returnValue = "cancel";
   confirmDialog.showModal();
@@ -712,6 +715,7 @@ async function confirmCloseTabs(tabs) {
   const message = dirty.length === 1
     ? `“${dirty[0].req.name}” has changes not saved to a collection. Close it? This cannot be undone.`
     : `${dirty.length} of these tabs have changes not saved to a collection. Close them? This cannot be undone.`;
+  // Discarding unsaved edits is data loss, so this confirmation keeps the danger styling.
   return confirmDialogShow({ title: "Close tabs", message, action: "Close tabs" });
 }
 
@@ -1041,18 +1045,34 @@ function toPostmanCollection(collection) {
   };
 }
 
+// Exports open the native Save As dialog so the user chooses the destination.
+// Plain-browser previews have no Tauri runtime; there a download is the only option.
+async function saveExport(file, text, filterName, extensions, mime) {
+  if (!window.__TAURI_INTERNALS__) {
+    const url = URL.createObjectURL(new Blob([text], { type: mime }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = file;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    notify(`Downloaded ${file}.`);
+    return null;
+  }
+  try {
+    const path = await invoke("save_export_file", { defaultName: file, filterName, extensions, contents: text });
+    notify(path ? `Saved to ${path}` : "Export cancelled.");
+    return path;
+  } catch (err) {
+    notify(`Export failed: ${String(err)}`);
+    return null;
+  }
+}
+
 function downloadJson(file, data) {
-  const url = URL.createObjectURL(
-    new Blob([JSON.stringify(data, null, 2)], { type: "application/json" })
-  );
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = file;
-  document.body.append(link);
-  link.click();
-  link.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 2000);
   persist();
+  return saveExport(file, JSON.stringify(data, null, 2), "JSON", ["json"], "application/json");
 }
 
 function exportEnvironment(env) {
@@ -1060,12 +1080,12 @@ function exportEnvironment(env) {
 }
 
 async function exportCollection(collection) {
-  const confirmed = await confirmDialogShow({ title: "Export collection", message: "This file includes auth tokens, secret variables, and bound environment values unchanged. Store it securely and do not commit it to source control.", action: "Export" });
+  const confirmed = await confirmDialogShow({ title: "Export collection", message: "This file includes auth tokens, secret variables, and bound environment values unchanged. Store it securely and do not commit it to source control.", action: "Export", danger: false });
   if (confirmed) downloadJson(`${String(collection.name || "collection").replace(/[^\w.-]+/g, "_")}.postman_collection.json`, toPostmanCollection(collection));
 }
 
 function exportSettings() {
-  downloadJson("postlite.settings.json", { kind: "postlite.settings", version: 1, settings: normalizeSettings(state.settings) });
+  return downloadJson("postlite.settings.json", { kind: "postlite.settings", version: 1, settings: normalizeSettings(state.settings) });
 }
 
 function importSettings(doc) {
@@ -1083,7 +1103,7 @@ let noteTimer = null;
 function notify(message) {
   clearTimeout(noteTimer);
   $("#tool-note").textContent = message;
-  noteTimer = setTimeout(() => { $("#tool-note").textContent = ""; }, 8000);
+  noteTimer = setTimeout(() => { $("#tool-note").textContent = ""; }, 5000);
 }
 
 async function copyText(text) {
@@ -1198,22 +1218,15 @@ const SNIPPET_EXT = {
 };
 
 function downloadText(file, text, mime) {
-  const url = URL.createObjectURL(new Blob([text], { type: mime }));
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = file;
-  document.body.append(link);
-  link.click();
-  link.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 2000);
+  const ext = file.includes(".") ? [file.split(".").pop()] : [];
+  return saveExport(file, text, "Snippet", ext, mime);
 }
 
 function exportSnippet() {
   const code = $("#code-output").textContent;
   if (!code || $("#code-export").disabled) return;
   const target = $("#code-target").value;
-  downloadText(`postlite-request.${SNIPPET_EXT[target] ?? "txt"}`, code, "text/plain;charset=utf-8");
-  notify("Snippet exported.");
+  void downloadText(`postlite-request.${SNIPPET_EXT[target] ?? "txt"}`, code, "text/plain;charset=utf-8");
 }
 
 function curlToTab(text) {
@@ -1371,6 +1384,9 @@ async function loadCookies() {
     renderCookies();
     return;
   }
+  // The jar lives behind an IPC round trip; say so instead of re-showing the last snapshot.
+  cookieSnapshot = { rows: [], note: "Loading cookies…", persisting: cookieSnapshot?.persisting ?? true };
+  renderCookies();
   try {
     cookieSnapshot = await invoke("cookie_list", { workspaceId: id });
   } catch (err) {
@@ -1477,13 +1493,13 @@ async function exportBackup() {
   const confirmed = await confirmDialogShow({
     title: "Export full backup",
     message: `This file contains everything the app stores (${described.summary}), including auth tokens and secret variables. Store it securely and do not commit it to source control.`,
-    action: "Export backup",
+    action: "Export backup", danger: false,
   });
   if (!confirmed) return;
-  downloadJson(`postlite.backup.${backupStamp()}.json`, {
+  const path = await downloadJson(`postlite.backup.${backupStamp()}.json`, {
     kind: "postlite.backup", version: 1, exportedAt: new Date().toISOString(), payload,
   });
-  notify(`Backup exported: ${described.summary}.`);
+  if (path) notify(`Backup exported to ${path}: ${described.summary}.`);
 }
 
 // Merge keeps the running preferences and adds the file's workspaces beside the
@@ -1576,10 +1592,15 @@ function render() {
   renderRequest();
   renderSettings();
   renderResponse();
+  renderMainEmpty();
   if (drawer.open && drawerPane === "code") renderCodeOutput();
+  const label = (count, singular, pluralForm) => (count === 1 ? singular : pluralForm);
   $("#stat-workspaces").textContent = state.workspaces.length;
+  $("#stat-workspaces-label").textContent = label(state.workspaces.length, "workspace", "workspaces");
   $("#stat-collections").textContent = state.collections.length;
+  $("#stat-collections-label").textContent = label(state.collections.length, "collection", "collections");
   $("#stat-tabs").textContent = state.tabs.length;
+  $("#stat-tabs-label").textContent = label(state.tabs.length, "open tab", "open tabs");
 }
 
 const wsMeta = (ws) => {
@@ -1597,15 +1618,17 @@ function renderWorkspaceBar() {
       .map((ws) => {
         const active = ws.id === state.activeWorkspaceId;
         return `
-        <div class="ws-row ${active ? "is-active" : ""}" data-id="${ws.id}" role="option" aria-selected="${active}" title="${esc(ws.name)}">
-          <svg class="ic" aria-hidden="true"><use href="#i-grid" /></svg>
-          <span class="ws-row-name">${esc(ws.name)}</span>
-          <svg class="ic ws-check" aria-hidden="true"><use href="#i-check" /></svg>
+        <div class="ws-item" data-id="${ws.id}">
+          <button class="ws-row ${active ? "is-active" : ""}" type="button" data-id="${ws.id}" ${active ? 'aria-current="true"' : ""} title="${esc(ws.name)}">
+            <svg class="ic" aria-hidden="true"><use href="#i-grid" /></svg>
+            <span class="ws-row-name">${esc(ws.name)}</span>
+            <svg class="ic ws-check" aria-hidden="true"><use href="#i-check" /></svg>
+            <span class="ws-row-meta">${esc(wsMeta(ws))}</span>
+          </button>
           <span class="ws-row-acts">
             <button class="node-act" data-act="rename" title="Rename workspace" aria-label="Rename ${esc(ws.name)}">${icon("pencil")}</button>
             <button class="node-act" data-act="delete" title="Delete workspace" aria-label="Delete ${esc(ws.name)}">${icon("trash")}</button>
           </span>
-          <span class="ws-row-meta">${esc(wsMeta(ws))}</span>
         </div>`;
       })
       .join("") ||
@@ -1629,25 +1652,29 @@ function renderEnvBar() {
   const bound = envForCollection(collection);
   $("#env-button-label").textContent = bound ? bound.name : "No environment";
   $("#env-list").innerHTML =
-    `<div class="ws-row ${bound ? "" : "is-active"}" data-id="" role="option" aria-selected="${!bound}" title="No environment">
-      <svg class="ic env-none" aria-hidden="true"><use href="#i-x" /></svg>
-      <span class="ws-row-name">No environment</span>
-      <svg class="ic ws-check" aria-hidden="true"><use href="#i-check" /></svg>
-      <span class="ws-row-meta">send without environment variables</span>
+    `<div class="ws-item" data-id="">
+      <button class="ws-row ${bound ? "" : "is-active"}" type="button" data-id="" ${bound ? "" : 'aria-current="true"'} title="No environment">
+        <svg class="ic env-none" aria-hidden="true"><use href="#i-x" /></svg>
+        <span class="ws-row-name">No environment</span>
+        <svg class="ic ws-check" aria-hidden="true"><use href="#i-check" /></svg>
+        <span class="ws-row-meta">send without environment variables</span>
+      </button>
     </div>` + state.environments.map((env) => envRowMarkup(env, bound?.id === env.id)).join("");
 }
 
 const envRowMarkup = (env, bound) => `
-  <div class="ws-row ${bound ? "is-active" : ""}" data-id="${env.id}" role="option" aria-selected="${bound}" title="${esc(env.name)}">
-    <svg class="ic" aria-hidden="true"><use href="#i-globe" /></svg>
-    <span class="ws-row-name">${esc(env.name)}</span>
-    <svg class="ic ws-check" aria-hidden="true"><use href="#i-check" /></svg>
+  <div class="ws-item" data-id="${env.id}">
+    <button class="ws-row ${bound ? "is-active" : ""}" type="button" data-id="${env.id}" ${bound ? 'aria-current="true"' : ""} title="${esc(env.name)}">
+      <svg class="ic" aria-hidden="true"><use href="#i-globe" /></svg>
+      <span class="ws-row-name">${esc(env.name)}</span>
+      <svg class="ic ws-check" aria-hidden="true"><use href="#i-check" /></svg>
+      <span class="ws-row-meta">${esc(envPreview(env))}</span>
+    </button>
     <span class="ws-row-acts">
       <button class="node-act" data-act="export" title="Export Postman environment JSON" aria-label="Export ${esc(env.name)}">${icon("export")}</button>
       <button class="node-act" data-act="rename" title="Rename environment" aria-label="Rename ${esc(env.name)}">${icon("pencil")}</button>
       <button class="node-act" data-act="delete" title="Delete environment" aria-label="Delete ${esc(env.name)}">${icon("trash")}</button>
     </span>
-    <span class="ws-row-meta">${esc(envPreview(env))}</span>
   </div>`;
 
 function renderSidebar() {
@@ -1672,7 +1699,7 @@ function renderCollections() {
       <div class="empty">
         <svg class="ic" aria-hidden="true"><use href="#i-stack" /></svg>
         <b>No collections yet</b>
-        <span>Save a request with Ctrl+S, import from the top bar, or drop a Postman, backup, settings, or cURL file anywhere in the window.</span>
+        <span>Import a collection, or save a request with Ctrl+S.</span>
       </div>`;
     return;
   }
@@ -1712,8 +1739,10 @@ function envMarkup(env) {
   return `
     <div class="node group env ${selected ? "is-active" : ""}" data-id="${env.id}" data-kind="environment" style="padding-left:4px">
       <div class="node-head">
-        <svg class="ic folder-ic" aria-hidden="true"><use href="#i-globe" /></svg>
-        <span class="node-name">${esc(env.name)}</span>
+        <button class="node-open" type="button" data-id="${env.id}" ${selected ? 'aria-current="true"' : ""} aria-label="${esc(env.name)}">
+          <svg class="ic folder-ic" aria-hidden="true"><use href="#i-globe" /></svg>
+          <span class="node-name">${esc(env.name)}</span>
+        </button>
         <span class="node-acts">
           <button class="node-act" data-act="export" title="Export Postman environment JSON" aria-label="Export ${esc(env.name)}">${icon("export")}</button>
           <button class="node-act" data-act="rename" title="Rename" aria-label="Rename ${esc(env.name)}">${icon("pencil")}</button>
@@ -1796,28 +1825,36 @@ function nodeMarkup(node, depth, cid, kind = node.kind, override = null) {
 }
 
 function renderTabbar() {
+  const hadFocus = $("#tabbar").contains(document.activeElement);
   $("#tabbar").innerHTML = state.tabs
     .map((tab) => {
+      const active = tab.id === state.activeTabId;
       if (tab.kind === "environment") {
         const env = locateEnvironment(tab.envId);
         return `
-      <div class="tab-item ${tab.id === state.activeTabId ? "is-active" : ""}" data-id="${tab.id}" title="${esc(env?.name ?? "Environment")}">
-        <svg class="ic folder-ic" aria-hidden="true"><use href="#i-globe" /></svg>
-        <span class="tab-name">${esc(env?.name ?? "Environment")}</span>
-        <button class="close" data-act="close-tab" title="Close" aria-label="Close tab">${icon("x")}</button>
+      <div class="tab-wrap ${active ? "is-active" : ""}" data-id="${tab.id}" title="${esc(env?.name ?? "Environment")}">
+        <button class="tab-item" type="button" data-id="${tab.id}" ${active ? 'aria-current="true"' : ""}>
+          <svg class="ic folder-ic" aria-hidden="true"><use href="#i-globe" /></svg>
+          <span class="tab-name">${esc(env?.name ?? "Environment")}</span>
+        </button>
+        <button class="close" data-act="close-tab" title="Close" aria-label="Close ${esc(env?.name ?? "environment")} tab">${icon("x")}</button>
       </div>`;
       }
       return `
-      <div class="tab-item ${tab.id === state.activeTabId ? "is-active" : ""}" data-id="${tab.id}" title="${esc(tab.req.name)}">
-        <span class="method ${esc(tab.req.method)}">${esc(tab.req.method)}</span>
-        <span class="tab-name">${esc(tab.req.name)}</span>
-        ${tabDirty(tab) ? `<span class="tab-dirty" title="Unsaved changes"></span>` : ""}
-        <button class="close" data-act="close-tab" title="Close" aria-label="Close tab">${icon("x")}</button>
+      <div class="tab-wrap ${active ? "is-active" : ""}" data-id="${tab.id}" title="${esc(tab.req.name)}">
+        <button class="tab-item" type="button" data-id="${tab.id}" ${active ? 'aria-current="true"' : ""}>
+          <span class="method ${esc(tab.req.method)}">${esc(tab.req.method)}</span>
+          <span class="tab-name">${esc(tab.req.name)}</span>
+          ${tabDirty(tab) ? `<span class="tab-dirty" title="Unsaved changes" aria-hidden="true"></span><span class="sr-only">Unsaved changes</span>` : ""}
+        </button>
+        <button class="close" data-act="close-tab" title="Close" aria-label="Close ${esc(tab.req.name)} tab">${icon("x")}</button>
       </div>`;
     })
     .join("");
   $("#tabbar").insertAdjacentHTML("beforeend", `<button class="icon-btn" data-act="new-tab" title="New request (Ctrl+N)" aria-label="New request">${icon("plus")}</button>`);
-  $("#tabbar .tab-item.is-active")?.scrollIntoView({ inline: "nearest", block: "nearest" });
+  $("#tabbar .tab-wrap.is-active .tab-item")?.scrollIntoView({ inline: "nearest", block: "nearest" });
+  // Rebuilds destroy the focused node; keyboard users must not be thrown to the top of the page.
+  if (hadFocus) ($("#tabbar .tab-wrap.is-active .tab-item") ?? $("#tabbar [data-act=new-tab]"))?.focus({ preventScroll: true });
 }
 
 function renderRequest() {
@@ -1825,10 +1862,10 @@ function renderRequest() {
   const pane = $("#req-pane");
   renderVarPeek();
   if (!req) {
-    pane.style.visibility = "hidden";
+    pane.hidden = true;
     return;
   }
-  pane.style.visibility = "visible";
+  pane.hidden = false;
   $("#method").value = req.method;
   $("#method").dataset.method = req.method;
   $("#url").value = req.url;
@@ -1867,7 +1904,7 @@ function renderRows(tbody, rows, options = {}) {
         : `<td>${valueInput}</td>`;
       return `
       <tr data-index="${index}">
-        ${check ? `<td class="c-check"><input type="checkbox" data-field="enabled" ${row.enabled ? "checked" : ""} /></td>` : ""}
+        ${check ? `<td class="c-check"><input type="checkbox" data-field="enabled" aria-label="Include in request" ${row.enabled ? "checked" : ""} /></td>` : ""}
         <td><input type="text" data-field="key" value="${esc(row.key)}" spellcheck="false" /></td>
         ${valueCell}
         ${secret ? `<td class="c-secret"><input type="checkbox" data-field="secret" ${row.secret ? "checked" : ""} aria-label="Secret" title="Mask this value in the UI" /></td>` : ""}
@@ -1928,9 +1965,17 @@ function settingsNode() {
   return tab?.kind === "environment" ? (locateEnvironment(tab.envId) ?? null) : null;
 }
 
+// With no open tab the request and response stages are replaced by one
+// onboarding panel (.main.no-tabs). A selected collection or environment opens
+// its own editor instead, so it never shows the onboarding panel.
+function renderMainEmpty() {
+  const empty = !activeTab() && !$(".main").classList.contains("settings-open");
+  $("#workspace-empty").hidden = !empty;
+  $(".main").classList.toggle("no-tabs", empty);
+}
+
 function renderSettings() {
-  const node = settingsNode();
-  const isEnv = state.environments.includes(node);
+  const node = settingsNode();  const isEnv = state.environments.includes(node);
   const kind = isEnv ? "environment" : state.selected?.kind;
   $("#settings-pane").hidden = !node;
   $(".main").classList.toggle("settings-open", Boolean(node));
@@ -2001,14 +2046,14 @@ function syncResStage() {
   const res = $("#res-pane");
   res.classList.toggle("is-empty", !response);
   res.classList.toggle("is-failed", !!response?.error && ["pretty", "raw", "preview"].includes(view));
-  if (response?.error) $("#res-failed-msg").textContent = response.error;
+  if (response?.error) $("#res-failed-msg").textContent = response.error.replace(/^Error:\s*/, "");
 }
 
 /* Preview tab: renders an HTML body in a fully sandboxed iframe — no scripts,
    forms, or same-origin access, so untrusted markup stays inert. Rendering is
    lazy (only while the tab is visible) and the iframe only reloads when a
    different response object arrives. */
-const previewEmptyDoc = '<!doctype html><body style="font:12px system-ui,sans-serif;color:#888;margin:14px">Preview is available for HTML responses.</body>';
+const previewEmptyDoc = '<!doctype html><body style="font:12px system-ui,sans-serif;color:#595959;margin:14px">Preview is available for HTML responses.</body>';
 
 const previewable = (response) =>
   response.headers.some((h) => /(?:^|[\s:;])(?:text\/html|application\/xhtml\+xml)\b/i.test(`${h.key}: ${h.value}`));
@@ -2066,7 +2111,6 @@ function renderResponse() {
     $("#raw").textContent = "";
     $("#res-headers").tBodies[0].innerHTML = "";
     $("#res-headers-count").textContent = "";
-    showError(response.error);
     renderPreview();
     syncResStage();
     return;
@@ -2108,7 +2152,7 @@ function renderTests(results) {
       .map(
         (r) => `
       <li class="${r.passed ? "pass" : "fail"}">
-        <span class="mark">${r.passed ? "✓" : "✕"}</span>
+        <span class="mark" aria-hidden="true">${r.passed ? "✓" : "✕"}</span><span class="sr-only">${r.passed ? "Passed" : "Failed"}</span>
         <div>
           <div>${esc(r.name)}</div>
           ${r.message ? `<p class="msg">${esc(r.message)}</p>` : ""}
@@ -2189,6 +2233,7 @@ async function send() {
   const tab = activeTab();
   const req = tab?.req;
   if (!req || !req.url.trim()) {
+    notify("URL is required: type a request URL, then send.");
     $("#url").focus();
     return;
   }
@@ -2273,6 +2318,11 @@ const DIALOG_SUB = {
 function openRenameDialog(target) {
   renameTarget = target;
   $("#collection-name").value = target.name;
+  const title = target.kind === "workspace" ? "Rename workspace"
+    : target.kind === "environment" ? "Rename environment"
+    : target.kind === "folder" ? "Rename folder"
+    : "Rename collection";
+  $("#collection-dialog-title").textContent = title;
   $("#collection-dialog .dialog-sub").textContent = DIALOG_SUB[target.kind] ?? DIALOG_SUB.default;
   collectionDialog.returnValue = "cancel";
   collectionDialog.showModal();
@@ -2281,6 +2331,11 @@ function openRenameDialog(target) {
 function openCreateDialog(kind) {
   renameTarget = { kind, id: null };
   $("#collection-name").value = "";
+  const title = kind === "workspace" ? "New workspace"
+    : kind === "environment" ? "New environment"
+    : kind === "folder" ? "New folder"
+    : "New collection";
+  $("#collection-dialog-title").textContent = title;
   $("#collection-dialog .dialog-sub").textContent = DIALOG_SUB[kind] ?? DIALOG_SUB.default;
   collectionDialog.returnValue = "cancel";
   collectionDialog.showModal();
@@ -2570,9 +2625,13 @@ $("#environments").addEventListener("click", (event) => {
 
 /* ----------------------------------------------------------- workspace switcher */
 
-function closeWsPop() {
-  $("#ws-pop").hidden = true;
+function closeWsPop({ restoreFocus = false } = {}) {
+  const pop = $("#ws-pop");
+  const hadFocus = pop.contains(document.activeElement);
+  pop.hidden = true;
   $("#ws-button").setAttribute("aria-expanded", "false");
+  // A row that was focused is gone once the popover hides; hand focus to the trigger.
+  if (hadFocus || restoreFocus) $("#ws-button").focus({ preventScroll: true });
 }
 
 $("#ws-button").addEventListener("click", () => {
@@ -2584,9 +2643,9 @@ $("#ws-button").addEventListener("click", () => {
 
 $("#ws-list").addEventListener("click", (event) => {
   const action = event.target.closest("[data-act]")?.dataset.act;
-  const row = event.target.closest(".ws-row");
-  if (!row) return;
-  const ws = locateWorkspace(row.dataset.id);
+  const item = event.target.closest(".ws-item");
+  if (!item) return;
+  const ws = locateWorkspace(item.dataset.id);
   if (!ws) return;
   if (action === "rename") {
     closeWsPop();
@@ -2607,13 +2666,20 @@ $("#ws-new").addEventListener("click", () => {
   openCreateDialog("workspace");
 });
 
+// Full innerHTML rebuild per keystroke is wasteful on big trees; 120ms keeps typing instant-feeling.
+let treeFilterTimer = null;
 $("#tree-search").addEventListener("input", (event) => {
-  state.filter = event.target.value;
-  renderSidebar();
+  const value = event.target.value;
+  clearTimeout(treeFilterTimer);
+  treeFilterTimer = setTimeout(() => {
+    state.filter = value;
+    renderSidebar();
+  }, 120);
 });
 
 $("#tree-search").addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
+  clearTimeout(treeFilterTimer);
   event.target.value = "";
   state.filter = "";
   renderSidebar();
@@ -2621,6 +2687,7 @@ $("#tree-search").addEventListener("keydown", (event) => {
 });
 
 $("#tree-search-clear").addEventListener("click", () => {
+  clearTimeout(treeFilterTimer);
   $("#tree-search").value = "";
   state.filter = "";
   renderSidebar();
@@ -2687,6 +2754,7 @@ $("#copy-res").addEventListener("click", async () => {
   button.classList.add(ok ? "copied" : "copy-fail");
   button.title = ok ? "Copied" : "Copy failed";
   button.querySelector("use").setAttribute("href", ok ? "#i-check" : "#i-x");
+  notify(ok ? "Response copied." : "Copy failed.");
   clearTimeout(copyTimer);
   copyTimer = setTimeout(() => {
     button.classList.remove("copied", "copy-fail");
@@ -2697,28 +2765,61 @@ $("#copy-res").addEventListener("click", async () => {
 
 $("#tabbar").addEventListener("click", (event) => {
   if (event.target.closest('[data-act="new-tab"]')) { addTab(); return; }
-  const item = event.target.closest(".tab-item");
+  const closeBtn = event.target.closest('[data-act="close-tab"]');
+  const item = event.target.closest(".tab-wrap");
   if (!item) return;
-  if (event.target.closest('[data-act="close-tab"]')) closeTab(item.dataset.id);
+  if (closeBtn) closeTab(item.dataset.id);
   else selectTab(item.dataset.id);
 });
 
 /* tab right-click menu: close the other tabs, or all of them */
 let menuTabId = null;
+let menuOpener = null;
 function closeTabMenu() {
   $("#tab-menu").hidden = true;
   menuTabId = null;
+  if (menuOpener) { menuOpener.focus(); menuOpener = null; }
 }
 $("#tabbar").addEventListener("contextmenu", (event) => {
-  const item = event.target.closest(".tab-item");
+  const item = event.target.closest(".tab-wrap");
   if (!item) return;
   event.preventDefault();
   menuTabId = item.dataset.id;
+  menuOpener = item.querySelector(".tab-item");
   const menu = $("#tab-menu");
   menu.hidden = false;
   const pad = 6;
   menu.style.left = `${Math.max(pad, Math.min(event.clientX, window.innerWidth - menu.offsetWidth - pad))}px`;
   menu.style.top = `${Math.max(pad, Math.min(event.clientY, window.innerHeight - menu.offsetHeight - pad))}px`;
+  menu.querySelector(".ctx-item")?.focus();
+});
+
+$("#tabbar").addEventListener("keydown", (event) => {
+  const item = event.target.closest?.(".tab-wrap");
+  if (!item) return;
+  if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
+    event.preventDefault();
+    menuTabId = item.dataset.id;
+    menuOpener = item.querySelector(".tab-item");
+    const rect = item.getBoundingClientRect();
+    const menu = $("#tab-menu");
+    menu.hidden = false;
+    const pad = 6;
+    menu.style.left = `${Math.max(pad, Math.min(rect.left, window.innerWidth - menu.offsetWidth - pad))}px`;
+    menu.style.top = `${Math.max(pad, Math.min(rect.bottom, window.innerHeight - menu.offsetHeight - pad))}px`;
+    menu.querySelector(".ctx-item")?.focus();
+  }
+});
+
+$("#tab-menu").addEventListener("keydown", (event) => {
+  const items = [...$("#tab-menu").querySelectorAll(".ctx-item")];
+  const idx = items.indexOf(document.activeElement);
+  if (event.key === "Escape") { closeTabMenu(); return; }
+  if (event.key === "ArrowDown") { event.preventDefault(); items[(idx + 1) % items.length]?.focus(); return; }
+  if (event.key === "ArrowUp") { event.preventDefault(); items[(idx - 1 + items.length) % items.length]?.focus(); return; }
+  if (event.key === "Home") { event.preventDefault(); items[0]?.focus(); return; }
+  if (event.key === "End") { event.preventDefault(); items[items.length - 1]?.focus(); return; }
+  if (event.key === "Tab") closeTabMenu();
 });
 $("#tab-menu").addEventListener("click", (event) => {
   const action = event.target.closest("[data-menu]")?.dataset.menu;
@@ -2747,7 +2848,11 @@ window.addEventListener("blur", closeWsPop);
 window.addEventListener("blur", closeEnvPop);
 
 function activateTab(navSel, panelSel, tab) {
-  for (const button of $$(navSel)) button.classList.toggle("is-active", button === tab);
+  for (const button of $$(navSel)) {
+    button.classList.toggle("is-active", button === tab);
+    if (button === tab) button.setAttribute("aria-current", "true");
+    else button.removeAttribute("aria-current");
+  }
   for (const panel of $$(panelSel)) {
     panel.classList.toggle("is-active", panel.dataset.tab === tab.dataset.tab || panel.dataset.pane === tab.dataset.tab);
   }
@@ -2856,9 +2961,12 @@ $("[data-add-vars]").addEventListener("click", () => {
   persist();
 });
 
-function closeEnvPop() {
-  $("#env-pop").hidden = true;
+function closeEnvPop({ restoreFocus = false } = {}) {
+  const pop = $("#env-pop");
+  const hadFocus = pop.contains(document.activeElement);
+  pop.hidden = true;
   $("#env-button").setAttribute("aria-expanded", "false");
+  if (hadFocus || restoreFocus) $("#env-button").focus({ preventScroll: true });
 }
 
 $("#env-button").addEventListener("click", () => {
@@ -2870,9 +2978,9 @@ $("#env-button").addEventListener("click", () => {
 
 $("#env-list").addEventListener("click", (event) => {
   const action = event.target.closest("[data-act]")?.dataset.act;
-  const row = event.target.closest(".ws-row");
-  if (!row) return;
-  const env = locateEnvironment(row.dataset.id);
+  const item = event.target.closest(".ws-item");
+  if (!item) return;
+  const env = locateEnvironment(item.dataset.id);
   if (action === "export") {
     if (env) exportEnvironment(env);
     return;
@@ -2889,7 +2997,7 @@ $("#env-list").addEventListener("click", (event) => {
   }
   const collection = activeCollection();
   if (!collection) return;
-  collection.environmentId = row.dataset.id || null;
+  collection.environmentId = item.dataset.id || null;
   closeEnvPop();
   render();
   persist();
@@ -3075,6 +3183,7 @@ function renderVarPeek(liveText) {
   peek.hidden = names.length === 0;
   $(".urlbox").classList.toggle("has-vars", names.length > 0);
   peek.querySelector(".var-count").textContent = names.length;
+  peek.setAttribute("aria-label", `Show ${names.length} variable value${names.length === 1 ? "" : "s"}`);
   if (!$("#var-overlay").hidden) renderVarOverlay(names, liveText);
 }
 
@@ -3127,8 +3236,11 @@ function renderVarOverlay(names, liveText) {
 }
 
 function closeVarOverlay() {
-  $("#var-overlay").hidden = true;
+  const overlay = $("#var-overlay");
+  const hadFocus = overlay.contains(document.activeElement);
+  overlay.hidden = true;
   $("#var-peek").setAttribute("aria-expanded", "false");
+  if (hadFocus) $("#var-peek").focus({ preventScroll: true });
 }
 
 $("#var-peek").addEventListener("click", () => {
@@ -3207,9 +3319,18 @@ resizer.addEventListener("pointerdown", (event) => {
   document.body.classList.add("resizing");
 });
 
+// Pointer samples arrive faster than frames; one write per rAF keeps the grid reflow at 60fps.
+let resizePending = false;
+let resizeX = 0;
 resizer.addEventListener("pointermove", (event) => {
   if (!resizing) return;
-  applySidebarWidth(dragStartW + event.clientX - dragStartX);
+  resizeX = event.clientX;
+  if (resizePending) return;
+  resizePending = true;
+  requestAnimationFrame(() => {
+    resizePending = false;
+    if (resizing) applySidebarWidth(dragStartW + resizeX - dragStartX);
+  });
 });
 
 function endResize(event) {
@@ -3258,6 +3379,10 @@ window.addEventListener("resize", () => {
 });
 
 $("#import-btn").addEventListener("click", () => $("#import-file").click());
+$("#empty-import").addEventListener("click", () => $("#import-file").click());
+$("#workspace-empty").addEventListener("click", (event) => {
+  if (event.target.closest('[data-act="new-tab"]')) addTab();
+});
 $("#import-file").addEventListener("change", async (event) => {
   const file = event.target.files?.[0];
   if (!file) return;
@@ -3420,9 +3545,19 @@ window.addEventListener("blur", () => {
 const systemTheme = window.matchMedia("(prefers-color-scheme: dark)");
 const appSettingsDialog = $("#app-settings-dialog");
 
+const THEME_HELP = {
+  dark: "Always dark, whatever the system uses.",
+  light: "Always light, whatever the system uses.",
+  system: "Follows your operating system's appearance.",
+};
+
 function applyTheme() {
   const theme = state.settings.general.theme;
-  document.documentElement.dataset.theme = theme === "system" ? (systemTheme.matches ? "dark" : "light") : theme;
+  const resolved = theme === "system" ? (systemTheme.matches ? "dark" : "light") : theme;
+  document.documentElement.dataset.theme = resolved;
+  const help = $("#pref-theme-help");
+  if (help) help.textContent = THEME_HELP[theme] ?? THEME_HELP.system;
+  try { localStorage.setItem("postlite.theme", theme); } catch {}
 }
 
 const settingPath = (path) => path.split(".").reduce((node, key) => node?.[key], state.settings);
@@ -3466,6 +3601,8 @@ function applyAppSettings() {
   activateTab("#res-tabs .tab", "#pretty, #raw, #preview, #res-headers, .tests", $(`#res-tabs [data-tab="${state.settings.response.defaultView}"]`));
   refreshPreferenceControls();
   syncCookiePersist();
+  $("#save").disabled = false;
+  $("#send").disabled = false;
   render();
 }
 
@@ -3484,6 +3621,7 @@ function openAppSettings() {
   closeWsPop();
   closeEnvPop();
   closeVarOverlay();
+  resetPrefSearch();
   refreshPreferenceControls();
   refreshTransferOptions();
   void loadProxyCredentials();
@@ -3497,6 +3635,95 @@ $("#app-settings-close").addEventListener("click", () => appSettingsDialog.close
 $("#app-settings-tabs").addEventListener("click", (event) => {
   const tab = event.target.closest(".tab");
   if (tab) activateTab("#app-settings-tabs .tab", "#app-settings-dialog .pane", tab);
+});
+
+/* Settings search: rows, whole fieldsets, and shortcut/about entries filter live;
+   tabs carry match counts and the first matching section opens automatically. */
+const prefSearch = $("#pref-search");
+const prefSearchClear = $("#pref-search-clear");
+const prefSearchStatus = $("#pref-search-status");
+const prefSearchEmpty = $("#pref-search-empty");
+const prefSearchEmptyQuery = $("#pref-search-empty-query");
+const prefSections = $$("#app-settings-dialog .pane").map((pane) => ({
+  pane,
+  tab: $(`#app-settings-tabs .tab[data-tab="${pane.dataset.pane}"]`),
+  units: [...pane.querySelectorAll(":scope > .preferences-row, :scope > fieldset.preferences-transfer, :scope > .preferences-shortcuts > div, :scope > .preferences-about > div, :scope > .preferences-reset")],
+}));
+for (const { tab } of prefSections) tab.append(Object.assign(document.createElement("span"), { className: "pref-count", hidden: true }));
+
+function prefUnitText(unit) {
+  let text = `${unit.id ?? ""} ${unit.textContent}`;
+  for (const node of unit.querySelectorAll("[id], [data-setting]")) text += ` ${node.id} ${node.dataset.setting ?? ""}`;
+  return text.toLowerCase();
+}
+
+function applyPrefSearch() {
+  const raw = prefSearch.value.trim();
+  const query = raw.toLowerCase();
+  const searching = query.length > 0;
+  appSettingsDialog.classList.toggle("is-searching", searching);
+  prefSearchClear.hidden = !searching;
+  let total = 0;
+  let sections = 0;
+  let firstMatch = null;
+  for (const { tab, units } of prefSections) {
+    let count = 0;
+    for (const unit of units) {
+      const hit = !searching || prefUnitText(unit).includes(query);
+      unit.hidden = searching && !hit;
+      if (searching && hit) count++;
+    }
+    const badge = tab.querySelector(".pref-count");
+    badge.hidden = !searching;
+    badge.textContent = String(count);
+    tab.classList.toggle("pref-no-match", searching && !count);
+    if (searching && count) {
+      total += count;
+      sections++;
+      firstMatch ??= tab;
+    }
+  }
+  const empty = searching && total === 0;
+  for (const { pane } of prefSections) pane.hidden = empty;
+  prefSearchEmpty.hidden = !empty;
+  prefSearchEmptyQuery.textContent = raw;
+  prefSearchStatus.textContent = !searching ? "" : total
+    ? `${total} result${total === 1 ? "" : "s"} in ${sections} section${sections === 1 ? "" : "s"}`
+    : "No results";
+  if (searching && !empty) {
+    const active = prefSections.find(({ tab }) => tab.classList.contains("is-active"));
+    if (active?.tab.classList.contains("pref-no-match") && firstMatch) {
+      activateTab("#app-settings-tabs .tab", "#app-settings-dialog .pane", firstMatch);
+    }
+  }
+}
+
+function resetPrefSearch() {
+  prefSearch.value = "";
+  applyPrefSearch();
+}
+
+prefSearch.addEventListener("input", applyPrefSearch);
+prefSearchClear.addEventListener("click", () => {
+  resetPrefSearch();
+  prefSearch.focus();
+});
+appSettingsDialog.addEventListener("close", resetPrefSearch);
+appSettingsDialog.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && prefSearch.value) {
+    event.preventDefault();
+    resetPrefSearch();
+    return;
+  }
+  const typing = /^(input|select|textarea)$/i.test(event.target.tagName);
+  if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "f") {
+    event.preventDefault();
+    prefSearch.focus();
+    prefSearch.select();
+  } else if (event.key === "/" && !typing && !event.ctrlKey && !event.metaKey && !event.altKey) {
+    event.preventDefault();
+    prefSearch.focus();
+  }
 });
 appSettingsDialog.addEventListener("change", (event) => {
   const control = event.target.closest("[data-setting]");
@@ -3517,6 +3744,17 @@ appSettingsDialog.addEventListener("change", (event) => {
 
 // Proxy credentials are secrets: they live in the OS secret store, never in settings or a save.
 let proxyCredentials = { username: "", password: "" };
+$("#pref-proxy-pass-toggle").addEventListener("click", () => {
+  const input = $("#pref-proxy-pass");
+  const button = $("#pref-proxy-pass-toggle");
+  const reveal = input.type === "password";
+  input.type = reveal ? "text" : "password";
+  button.setAttribute("aria-pressed", String(reveal));
+  const label = reveal ? "Hide password" : "Show password";
+  button.setAttribute("aria-label", label);
+  button.title = label;
+  button.querySelector("use").setAttribute("href", reveal ? "#i-eye-off" : "#i-eye");
+});
 async function loadProxyCredentials() {
   try { proxyCredentials = (await invoke("proxy_credentials_get")) ?? { username: "", password: "" }; }
   catch { proxyCredentials = { username: "", password: "" }; }
@@ -3562,9 +3800,11 @@ async function saveWorkspaceNow() {
 }
 $("#save-workspace-now").addEventListener("click", saveWorkspaceNow);
 $("#status-save-now").addEventListener("click", saveWorkspaceNow);
-$("#settings-export").addEventListener("click", () => {
-  exportSettings();
-  $("#preferences-message").textContent = "Settings exported. This file contains preferences only.";
+$("#settings-export").addEventListener("click", async () => {
+  const path = await exportSettings();
+  $("#preferences-message").textContent = path
+    ? `Settings exported to ${path}. This file contains preferences only.`
+    : "Settings export cancelled.";
 });
 $("#settings-import").addEventListener("click", () => $("#settings-file").click());
 $("#settings-file").addEventListener("change", async (event) => {
@@ -3579,7 +3819,7 @@ $("#settings-file").addEventListener("change", async (event) => {
   } finally { event.target.value = ""; }
 });
 $("#settings-reset").addEventListener("click", async () => {
-  if (!await confirmDialogShow({ title: "Reset application settings", message: "Restore default preferences? Collections, environments, and requests will not be deleted.", action: "Reset settings" })) return;
+  if (!await confirmDialogShow({ title: "Reset application settings", message: "Restore default preferences? Collections, environments, and requests will not be deleted.", action: "Reset settings", danger: false })) return;
   state.settings = normalizeSettings();
   try { localStorage.removeItem(SIDEBAR_KEY); } catch {}
   applyAppSettings();
@@ -3645,10 +3885,10 @@ document.addEventListener("keydown", (event) => {
   // non-modal drawer is deliberately excluded so it never blocks this path.
   if ($("dialog[open]:not(#drawer)")) return;
   if (event.key === "Escape" && !$("#var-overlay").hidden) closeVarOverlay();
-  if (event.key === "Escape" && !$("#tab-menu").hidden) closeTabMenu();
-  if (event.key === "Escape" && drawer.open) { event.preventDefault(); closeDrawer(); }
-  if (event.key === "Escape" && !$("#ws-pop").hidden) closeWsPop();
-  if (event.key === "Escape" && !$("#env-pop").hidden) closeEnvPop();
+  else if (event.key === "Escape" && !$("#tab-menu").hidden) closeTabMenu();
+  else if (event.key === "Escape" && drawer.open) { event.preventDefault(); closeDrawer(); }
+  else if (event.key === "Escape" && !$("#ws-pop").hidden) closeWsPop({ restoreFocus: true });
+  else if (event.key === "Escape" && !$("#env-pop").hidden) closeEnvPop({ restoreFocus: true });
   if (!(event.ctrlKey || event.metaKey) || event.altKey || event.repeat) return;
   const key = event.key.toLowerCase();
   if (!["enter", "s", "n", "k", ",", "w", "pageup", "pagedown"].includes(key)) return;

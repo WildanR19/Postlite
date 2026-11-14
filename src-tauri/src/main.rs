@@ -576,6 +576,43 @@ fn proxy_credentials_get(app: AppHandle) -> Result<Option<ProxyCredentials>, Str
     load_credentials(&app.state::<Secrets>().store())
 }
 
+// The user picks the destination; a bare typed name gets the filter's extension
+// because native save dialogs do not consistently append it themselves.
+fn export_path(chosen: PathBuf, extensions: &[String]) -> PathBuf {
+    let mut path = chosen;
+    if path.extension().is_none() {
+        if let Some(ext) = extensions.first() {
+            path.set_extension(ext);
+        }
+    }
+    path
+}
+
+#[tauri::command]
+async fn save_export_file(
+    default_name: String,
+    filter_name: String,
+    extensions: Vec<String>,
+    contents: String,
+) -> Result<Option<String>, String> {
+    let mut dialog = rfd::AsyncFileDialog::new()
+        .set_title("Export from postlite")
+        .set_file_name(&default_name);
+    if !extensions.is_empty() {
+        dialog = dialog.add_filter(&filter_name, &extensions);
+    }
+    let Some(handle) = dialog.save_file().await else {
+        return Ok(None);
+    };
+    let path = export_path(handle.path().to_path_buf(), &extensions);
+    let target = path.clone();
+    tauri::async_runtime::spawn_blocking(move || std::fs::write(&target, contents.as_bytes()))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| format!("could not write the export: {e}"))?;
+    Ok(Some(path.to_string_lossy().into_owned()))
+}
+
 /// Remove `username`/`password` from every `proxy` object in a workspace save (§8), leaving request
 /// auth and everything else untouched. Returns the original string when there was nothing to strip,
 /// so a save without proxy credentials stays byte-for-byte what the caller sent.
@@ -1444,6 +1481,19 @@ mod tests {
         // The note stays after the first call: the drawer must never show an unexplained empty list.
         assert_eq!(stranger.snapshot("workspace-a").unwrap().note, Some(note));
     }
+
+    #[test]
+    fn export_path_appends_filter_extension_only_to_bare_names() {
+        let json = vec!["json".to_string()];
+        assert_eq!(export_path(PathBuf::from("/tmp/backup.json"), &json), PathBuf::from("/tmp/backup.json"));
+        assert_eq!(export_path(PathBuf::from("/tmp/backup"), &json), PathBuf::from("/tmp/backup.json"));
+        assert_eq!(
+            export_path(PathBuf::from("/tmp/archive.tar"), &json),
+            PathBuf::from("/tmp/archive.tar"),
+            "an extension the user typed stays untouched"
+        );
+        assert_eq!(export_path(PathBuf::from("/tmp/noext"), &[]), PathBuf::from("/tmp/noext"));
+    }
 }
 
 fn main() {
@@ -1464,7 +1514,8 @@ fn main() {
             cookie_purge,
             cookie_set_persist,
             proxy_credentials_set,
-            proxy_credentials_get
+            proxy_credentials_get,
+            save_export_file
         ])
         .run(tauri::generate_context!())
         .expect("failed to run postlite");
