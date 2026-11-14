@@ -821,6 +821,118 @@ button.link:hover {
   color: var(--faint);
 }
 
+/* collection reordering: the grip advertises the drag, the line marks the slot */
+
+#collections {
+  position: relative;
+}
+
+.drag-grip {
+  display: grid;
+  place-items: center;
+  width: 10px;
+  flex: none;
+  color: var(--faint);
+  opacity: 0;
+  cursor: grab;
+  transition: opacity var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+}
+
+.drag-grip .ic {
+  width: 12px;
+  height: 12px;
+}
+
+.node-head:hover .drag-grip,
+.node-head:focus-within .drag-grip {
+  opacity: 1;
+}
+
+.drag-grip:hover {
+  color: var(--dim);
+}
+
+.node-head[draggable="true"]:active .drag-grip {
+  cursor: grabbing;
+}
+
+.node.is-dragging {
+  opacity: 0.45;
+}
+
+.node.is-dragging > .node-head {
+  outline: 1px dashed var(--line-hover);
+  outline-offset: -1px;
+}
+
+.drop-line {
+  position: absolute;
+  left: 6px;
+  right: 8px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--cyan);
+  box-shadow: 0 0 6px rgba(53, 201, 221, 0.55);
+  pointer-events: none;
+  z-index: 3;
+}
+
+/* file drop overlay: one unmistakable target listing what the app accepts */
+
+.drop-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  background: var(--backdrop);
+  backdrop-filter: blur(3px);
+  pointer-events: none;
+}
+
+.drop-card {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  padding: 34px 48px;
+  text-align: center;
+  border: 2px dashed var(--accent);
+  border-radius: var(--r-l);
+  background:
+    radial-gradient(420px 200px at 50% -40%, rgba(255, 107, 35, 0.12), transparent 70%),
+    var(--bg-1);
+  box-shadow: var(--shadow-pop);
+  animation: drop-in var(--t-med) var(--ease);
+}
+
+.drop-card .ic {
+  width: 34px;
+  height: 34px;
+  color: var(--accent);
+}
+
+.drop-card b {
+  font-size: 16px;
+  color: var(--fg);
+}
+
+.drop-card span {
+  max-width: 360px;
+  font-size: 12px;
+  color: var(--dim);
+}
+
+@keyframes drop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
 /* method hues, shared by tree + tabbar + urlbar */
 .method {
   font-family: var(--mono);

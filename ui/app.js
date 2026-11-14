@@ -1216,21 +1216,8 @@ function exportSnippet() {
   notify("Snippet exported.");
 }
 
-async function importCurlCommand() {
-  const status = $("#curl-status");
-  const text = $("#curl-input").value.trim();
-  if (!text) {
-    status.textContent = "Paste a cURL command first.";
-    $("#curl-input").focus();
-    return;
-  }
-  let parsed;
-  try {
-    parsed = postliteText.parseCurl(text);
-  } catch (err) {
-    status.textContent = String(err.message ?? err);
-    return;
-  }
+function curlToTab(text) {
+  const parsed = postliteText.parseCurl(text);
   const { base, params } = splitUrl(parsed.url);
   addTab(newRequest({
     method: parsed.method,
@@ -1242,16 +1229,33 @@ async function importCurlCommand() {
       : { mode: parsed.body ? "raw" : "none", raw: parsed.body, contentType: parsed.contentType },
     auth: normAuth(parsed.auth, "inherit"),
   }));
-  const skipped = [...parsed.ignored, ...parsed.notes];
+  return [...parsed.ignored, ...parsed.notes];
+}
+
+async function importCurlCommand() {
+  const status = $("#curl-status");
+  const text = $("#curl-input").value.trim();
+  if (!text) {
+    status.textContent = "Paste a cURL command first.";
+    $("#curl-input").focus();
+    return;
+  }
+  let skipped;
+  try {
+    skipped = curlToTab(text);
+  } catch (err) {
+    status.textContent = String(err.message ?? err);
+    return;
+  }
   curlDialog.close();
   notify(skipped.length
     ? `cURL imported into a new tab. Not carried over: ${skipped.join(", ")}`
     : "cURL imported into a new tab.");
 }
 
-function openCurlDialog() {
-  $("#curl-input").value = "";
-  $("#curl-status").textContent = "";
+function openCurlDialog(prefill = "", status = "") {
+  $("#curl-input").value = prefill;
+  $("#curl-status").textContent = status;
   curlDialog.showModal();
   $("#curl-input").focus();
 }
@@ -1668,7 +1672,7 @@ function renderCollections() {
       <div class="empty">
         <svg class="ic" aria-hidden="true"><use href="#i-stack" /></svg>
         <b>No collections yet</b>
-        <span>Save a request with Ctrl+S, or import a Postman collection from the top bar.</span>
+        <span>Save a request with Ctrl+S, import from the top bar, or drop a Postman, backup, settings, or cURL file anywhere in the window.</span>
       </div>`;
     return;
   }
@@ -1727,7 +1731,7 @@ function renderEnvironments() {
       <div class="empty">
         <svg class="ic" aria-hidden="true"><use href="#i-globe" /></svg>
         <b>No environments yet</b>
-        <span>Add one with + above, or import a Postman environment JSON.</span>
+        <span>Add one with + above, import a Postman environment JSON, or drop the file anywhere in the window.</span>
       </div>`;
     return;
   }
@@ -1773,7 +1777,8 @@ function nodeMarkup(node, depth, cid, kind = node.kind, override = null) {
   return `
     <div class="node group ${collapsed ? "collapsed" : ""} ${selected ? "is-active" : ""}" data-id="${node.id}"
          data-cid="${cid}" data-kind="${kind}" style="--d:${depth};padding-left:${4 + depth * 10}px">
-      <div class="node-head">
+      <div class="node-head" ${kind === "collection" ? 'draggable="true"' : ""}>
+        ${kind === "collection" ? `<span class="drag-grip" title="Drag to reorder (or Alt+Up/Down)" aria-hidden="true">${icon("grip")}</span>` : ""}
         <button type="button" class="caret" aria-expanded="${!collapsed}" aria-label="${collapsed ? "Expand" : "Collapse"} ${esc(node.name)}">${icon("caret")}</button>
         <svg class="ic folder-ic" aria-hidden="true"><use href="#i-${kind === "collection" ? "stack" : "folder"}" /></svg>
         <span class="node-name">${esc(node.name)}</span>
@@ -2374,6 +2379,114 @@ $("#collections").addEventListener("dblclick", (event) => {
   // double-click's remaining job is to deselect and close the settings pane.
   if (state.selected?.id === id) state.selected = null;
   render();
+});
+
+/* ---------------------------------------------------- collection reordering */
+/* Top-level collections drag by their head row; a live line marks the insertion
+   point. Alt+Up/Down on a focused row is the keyboard equivalent. The move is
+   expressed against the master list, so it stays well-defined while filtering. */
+const collectionsHost = $("#collections");
+let draggedCollectionId = null;
+
+function topLevelCollections() {
+  return [...collectionsHost.children].filter((el) => el.dataset?.kind === "collection");
+}
+
+function collectionDropTarget(y) {
+  const nodes = topLevelCollections();
+  if (!nodes.length) return null;
+  for (const node of nodes) {
+    const rect = node.querySelector(":scope > .node-head").getBoundingClientRect();
+    if (y < rect.top + rect.height / 2) return { node, before: true };
+    if (y < rect.bottom) return { node, before: false };
+  }
+  return { node: nodes[nodes.length - 1], before: false };
+}
+
+function showCollectionDropTarget(target) {
+  let line = $("#collection-drop-line");
+  if (!line) {
+    line = document.createElement("div");
+    line.id = "collection-drop-line";
+    line.className = "drop-line";
+    collectionsHost.append(line);
+  }
+  const top = target.before ? target.node.offsetTop : target.node.offsetTop + target.node.offsetHeight;
+  line.style.top = `${top - 1}px`;
+  line.hidden = false;
+}
+
+function endCollectionDrag() {
+  draggedCollectionId = null;
+  $("#collection-drop-line")?.remove();
+  for (const node of $$(".node.is-dragging", collectionsHost)) node.classList.remove("is-dragging");
+}
+
+function moveCollection(id, toIndex) {
+  const from = state.collections.findIndex((c) => c.id === id);
+  if (from < 0 || toIndex < 0 || toIndex >= state.collections.length || from === toIndex) return false;
+  const [moved] = state.collections.splice(from, 1);
+  state.collections.splice(toIndex, 0, moved);
+  persist();
+  render();
+  notify(`Moved "${moved.name}" to position ${toIndex + 1} of ${state.collections.length}.`);
+  return true;
+}
+
+collectionsHost.addEventListener("dragstart", (event) => {
+  const node = event.target.closest?.('.node.group[data-kind="collection"]');
+  if (!node || node.parentElement !== collectionsHost) return;
+  draggedCollectionId = node.dataset.id;
+  event.dataTransfer.effectAllowed = "move";
+  event.dataTransfer.setData("application/x-postlite-collection", node.dataset.id);
+  event.dataTransfer.setData("text/plain", node.dataset.id);
+  requestAnimationFrame(() => node.classList.add("is-dragging"));
+});
+
+collectionsHost.addEventListener("dragover", (event) => {
+  if (!draggedCollectionId) return;
+  const target = collectionDropTarget(event.clientY);
+  if (!target) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = "move";
+  showCollectionDropTarget(target);
+});
+
+collectionsHost.addEventListener("dragleave", (event) => {
+  if (draggedCollectionId && !collectionsHost.contains(event.relatedTarget)) {
+    const line = $("#collection-drop-line");
+    if (line) line.hidden = true;
+  }
+});
+
+collectionsHost.addEventListener("drop", (event) => {
+  const id = draggedCollectionId ?? event.dataTransfer.getData("application/x-postlite-collection");
+  if (!id) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const target = collectionDropTarget(event.clientY);
+  if (target && target.node.dataset.id !== id) {
+    const rest = state.collections.filter((c) => c.id !== id);
+    let index = rest.findIndex((c) => c.id === target.node.dataset.id);
+    if (!target.before) index++;
+    moveCollection(id, index);
+  }
+  endCollectionDrag();
+});
+
+collectionsHost.addEventListener("dragend", endCollectionDrag);
+
+collectionsHost.addEventListener("keydown", (event) => {
+  if (!event.altKey || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) return;
+  const node = event.target.closest('.node.group[data-kind="collection"]');
+  if (!node || node.parentElement !== collectionsHost) return;
+  event.preventDefault();
+  const id = node.dataset.id;
+  const from = state.collections.findIndex((c) => c.id === id);
+  const to = from + (event.key === "ArrowUp" ? -1 : 1);
+  if (moveCollection(id, to)) {
+    $(`.node[data-id="${id}"] .caret`, collectionsHost)?.focus();
+  }
 });
 
 $("#environments").addEventListener("click", (event) => {
@@ -3124,6 +3237,129 @@ $("#env-import-file").addEventListener("change", async (event) => {
   event.target.value = "";
 });
 
+/* ------------------------------------------------------- drag & drop import */
+/* Files dropped anywhere in the window are routed by content, not extension:
+   postlite backup opens the restore dialog, settings apply directly, Postman
+   collections/environments are added, and a cURL script becomes a new tab. */
+
+function looksLikeCurl(text) {
+  const first = text.split("\n").map((line) => line.trim()).filter((line) => line && !line.startsWith("#"))[0] ?? "";
+  return /^curl(\.exe)?\b/i.test(first);
+}
+
+async function importDroppedFiles(files) {
+  const added = { collections: 0, environments: 0, tabs: 0, settings: 0 };
+  const failures = [];
+  let backupText = null;
+  let structural = false;
+  for (const file of files) {
+    try {
+      const text = await file.text();
+      const trimmed = text.trim();
+      let doc = null;
+      if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+        try { doc = JSON.parse(trimmed); } catch { /* not JSON; fall through to cURL */ }
+      }
+      if (doc?.kind === "postlite.backup") {
+        if (backupText === null) backupText = text;
+        else failures.push(`${file.name}: drop one backup at a time`);
+        continue;
+      }
+      if (doc?.kind === "postlite.settings") {
+        importSettings(doc);
+        added.settings++;
+        continue;
+      }
+      if (Array.isArray(doc?.item)) {
+        state.collections.push(fromPostman(doc));
+        added.collections++;
+        structural = true;
+        continue;
+      }
+      if (doc && typeof doc === "object" && !Array.isArray(doc) && Array.isArray(doc.values ?? doc.variables)) {
+        state.environments.push(fromPostmanEnvironment(doc));
+        added.environments++;
+        structural = true;
+        continue;
+      }
+      if (doc !== null) {
+        failures.push(`${file.name}: unrecognized JSON (expected a Postman export or a postlite backup/settings file)`);
+        continue;
+      }
+      if (looksLikeCurl(trimmed)) {
+        try {
+          curlToTab(trimmed);
+          added.tabs++;
+        } catch (err) {
+          openCurlDialog(text, String(err.message ?? err));
+          failures.push(`${file.name}: opened in the cURL dialog (${err.message ?? err})`);
+        }
+        continue;
+      }
+      failures.push(`${file.name}: unsupported file (JSON exports and cURL scripts only)`);
+    } catch (err) {
+      failures.push(`${file.name}: ${err.message ?? err}`);
+    }
+  }
+  if (structural) {
+    persist();
+    render();
+  }
+  $("#error").textContent = "";
+  const parts = [];
+  if (added.collections) parts.push(`${added.collections} collection(s)`);
+  if (added.environments) parts.push(`${added.environments} environment(s)`);
+  if (added.tabs) parts.push(`${added.tabs} cURL tab(s)`);
+  if (added.settings) parts.push("settings applied");
+  if (backupText !== null) {
+    openRestoreDialog(backupText);
+    parts.push("backup ready to restore");
+  }
+  if (parts.length) notify(`Imported ${parts.join(", ")}.`);
+  if (failures.length) showError(`import failed: ${failures.join(" · ")}`);
+}
+
+const dropOverlay = $("#drop-overlay");
+let fileDragDepth = 0;
+const carriesFiles = (event) => [...(event.dataTransfer?.types ?? [])].includes("Files");
+// A real modal owns the screen; the non-modal drawer does not block drops.
+const realModalOpen = () => !!$("dialog[open]:not(#drawer)");
+
+window.addEventListener("dragenter", (event) => {
+  if (!carriesFiles(event)) return;
+  event.preventDefault();
+  fileDragDepth++;
+  if (!realModalOpen()) dropOverlay.hidden = false;
+});
+window.addEventListener("dragover", (event) => {
+  if (!carriesFiles(event)) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = "copy";
+  if (!realModalOpen()) dropOverlay.hidden = false;
+});
+window.addEventListener("dragleave", (event) => {
+  if (!carriesFiles(event)) return;
+  fileDragDepth = Math.max(0, fileDragDepth - 1);
+  if (!fileDragDepth) dropOverlay.hidden = true;
+});
+window.addEventListener("drop", (event) => {
+  if (!carriesFiles(event)) return;
+  event.preventDefault();
+  fileDragDepth = 0;
+  dropOverlay.hidden = true;
+  if (realModalOpen()) return;
+  const files = [...(event.dataTransfer?.files ?? [])];
+  if (files.length) void importDroppedFiles(files);
+});
+window.addEventListener("dragend", () => {
+  fileDragDepth = 0;
+  dropOverlay.hidden = true;
+});
+window.addEventListener("blur", () => {
+  fileDragDepth = 0;
+  dropOverlay.hidden = true;
+});
+
 const systemTheme = window.matchMedia("(prefers-color-scheme: dark)");
 const appSettingsDialog = $("#app-settings-dialog");
 
@@ -3318,7 +3554,7 @@ $("#code-copy").addEventListener("click", async () => {
     ? `Snippet copied (${code.length} characters, variables resolved)`
     : "The clipboard is not available.");
 });
-$("#code-import").addEventListener("click", openCurlDialog);
+$("#code-import").addEventListener("click", () => openCurlDialog());
 $("#code-export").addEventListener("click", exportSnippet);
 $("#curl-import").addEventListener("click", () => void importCurlCommand());
 $("#curl-cancel").addEventListener("click", () => curlDialog.close());

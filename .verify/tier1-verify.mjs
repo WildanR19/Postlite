@@ -115,7 +115,8 @@ try {
   await click('#app-settings-close');
   await evaluate(`(() => {const v=__verify; const req=__fixture.items[0].items[0];req.url='{{base}}/{{api_key}}';__fixture.variables.push({key:'api_key',value:'synthetic-peek-key',enabled:true});v.addTab(structuredClone(req));v.renderVarOverlay(['base','api_key'],req.url);})()`);
   await check('var peek masks both flagged secrets and sensitive names', `!document.querySelector('#var-overlay').textContent.includes('synthetic-peek-key') && !document.querySelector('#var-overlay').textContent.includes('env-value')`);
-  await evaluate(`__verify.state.selected={kind:'environment',id:__env.id};__verify.render()`);
+  // Environments are edited in their own tab now (PR #2), not via sidebar selection.
+  await evaluate(`(() => { __verify.state.sidebarView='environments'; __verify.render(); document.querySelector('#environments .node[data-id="'+__env.id+'"]').click(); return true; })()`);
   await check('secret variable editor masks flagged values', `document.querySelector('#vars-table input[data-field="value"]').type==='password'`);
   await click('#open-app-settings');
   await set('privacy.maskSecretVariables',false);
