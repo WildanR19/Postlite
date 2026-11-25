@@ -647,6 +647,14 @@ impl Secrets {
             Ok(source) => Arc::new(source),
             Err(_) => Arc::new(store::NoSecretStoreKeys),
         };
+        self.store_named_with_keys(name, keys)
+    }
+
+    fn store_named_with_keys(
+        &self,
+        name: &str,
+        keys: Arc<dyn store::KeySource>,
+    ) -> store::EncryptedStore {
         store::EncryptedStore::open(&self.dir, name, keys)
     }
 }
@@ -1450,7 +1458,7 @@ fn save_workspace(app: AppHandle, state: String) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::{KeySource, TempDir};
+    use crate::store::{FakeKeySource, KeySource, TempDir};
     use serde_json::json;
     use std::io::{Read, Write};
     use std::net::TcpListener;
@@ -2626,13 +2634,18 @@ mod tests {
     fn per_node_secret_store_roundtrip_is_isolated() {
         let temp = TempDir::new("oauth2-test");
         let secrets = Secrets { dir: temp.path().to_path_buf(), identifier: "test".to_string() };
-        let store_a = secrets.store_named("oauth2-abc");
+        let keys_a = FakeKeySource::empty();
+        let store_a = secrets.store_named_with_keys("oauth2-abc", keys_a.clone());
         let bytes = serde_json::json!({ "secret": "s1" });
         store_a.save(serde_json::to_vec(&bytes).unwrap().as_slice()).unwrap();
-        let loaded = secrets.store_named("oauth2-abc").load().unwrap().unwrap();
+        let loaded = secrets
+            .store_named_with_keys("oauth2-abc", keys_a)
+            .load()
+            .unwrap()
+            .unwrap();
         let value = serde_json::from_slice::<serde_json::Value>(&loaded).unwrap();
         assert_eq!(value["secret"], "s1");
-        let store_b = secrets.store_named("oauth2-def");
+        let store_b = secrets.store_named_with_keys("oauth2-def", FakeKeySource::empty());
         assert!(store_b.load().unwrap().is_none());
     }
 
