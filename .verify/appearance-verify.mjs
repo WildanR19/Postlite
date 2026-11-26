@@ -8,7 +8,7 @@ const openAppearance = async () => {
   await click("#app-settings-tabs [data-tab='pref-appearance']");
 };
 const selectAppearance = (value) => click(`#pref-appearance-${value}`);
-const appearances = ["workbench", "terminal", "studio", "ledger"];
+const appearances = ["workbench", "classic", "focus", "terminal", "studio", "ledger"];
 const styleSignature = () => evaluate(`(() => {
   const send = getComputedStyle(document.querySelector("#send"));
   const heading = getComputedStyle(document.querySelector(".request-head h2"));
@@ -41,11 +41,11 @@ try {
   await evaluate('document.querySelector("#pref-appearance-workbench").focus()');
   await cmd("Input.dispatchKeyEvent", { type: "keyDown", key: "ArrowRight", code: "ArrowRight", windowsVirtualKeyCode: 39 });
   await cmd("Input.dispatchKeyEvent", { type: "keyUp", key: "ArrowRight", code: "ArrowRight", windowsVirtualKeyCode: 39 });
-  assert.equal(await evaluate("document.documentElement.dataset.appearance"), "terminal", "Arrow keys select the next appearance");
+  assert.equal(await evaluate("document.documentElement.dataset.appearance"), "classic", "Arrow keys select the next appearance");
   await cmd("Emulation.setEmulatedMedia", { features: [{ name: "forced-colors", value: "active" }] });
   await settle();
   assert.deepEqual(await evaluate(`(() => {
-    const selected = document.querySelector("#pref-appearance-terminal");
+    const selected = document.querySelector("#pref-appearance-classic");
     return { appearance: getComputedStyle(selected).appearance, dot: getComputedStyle(selected, "::after").content };
   })()`), { appearance: "auto", dot: "none" }, "High contrast uses the native checked indicator");
   await cmd("Emulation.setEmulatedMedia", { features: [] });
@@ -61,13 +61,91 @@ try {
       raw: document.querySelector("#raw.is-active")?.textContent,
     })`), { style: appearance, theme: "dark", accent: "ocean", raw: '{"appearance":true}' });
     signatures.push(await styleSignature());
+    if (appearance === "classic") {
+      await evaluate(`Promise.allSettled(document.querySelector(".main").getAnimations({ subtree: true }).map(animation => animation.finished)).then(() => true)`);
+      assert.deepEqual(await evaluate(`(() => {
+        const root = getComputedStyle(document.documentElement);
+        const main = getComputedStyle(document.querySelector(".main"));
+        return {
+          background: root.getPropertyValue("--bg-0").trim(),
+          topbar: getComputedStyle(document.querySelector(".topbar")).height,
+          command: root.getPropertyValue("--command-height").trim(),
+          divider: main.getPropertyValue("--res-divider-size").trim(),
+          requestLayout: getComputedStyle(document.querySelector("#req-pane")).display,
+          sendBackground: getComputedStyle(document.querySelector("#send")).backgroundColor,
+          pulse: getComputedStyle(document.querySelector(".res-pulse")).display,
+        };
+      })()`), {
+        background: "#0b0d10",
+        topbar: "44px",
+        command: "36px",
+        divider: "6px",
+        requestLayout: "grid",
+        sendBackground: "rgba(0, 0, 0, 0)",
+        pulse: "block",
+      }, "Classic restores the compact surfaces and controls");
+      await evaluate(`(() => {
+        __verify.state.settings.general.theme = "light";
+        __verify.applyAppSettings();
+      })()`);
+      assert.equal(await evaluate(`getComputedStyle(document.documentElement).getPropertyValue("--bg-0").trim()`), "#f4f6f8");
+      await evaluate(`(() => {
+        const settings = __verify.state.settings.general;
+        settings.theme = "dark";
+        settings.accent = "ember";
+        __verify.applyAppSettings();
+      })()`);
+      assert.equal(await evaluate(`getComputedStyle(document.documentElement).getPropertyValue("--accent").trim()`), "#ff6b35");
+      await evaluate(`(() => {
+        __verify.state.settings.general.accent = "ocean";
+        __verify.applyAppSettings();
+      })()`);
+      await click("#res-tabs [data-tab='raw']");
+    }
+    if (appearance === "focus") {
+      await evaluate(`Promise.allSettled(document.querySelector(".main").getAnimations({ subtree: true }).map(animation => animation.finished)).then(() => true)`);
+      assert.deepEqual(await evaluate(`(() => {
+        const root = getComputedStyle(document.documentElement);
+        const main = getComputedStyle(document.querySelector(".main"));
+        return {
+          background: root.getPropertyValue("--bg-0").trim(),
+          topbar: getComputedStyle(document.querySelector(".topbar")).height,
+          command: root.getPropertyValue("--command-height").trim(),
+          divider: main.getPropertyValue("--res-divider-size").trim(),
+          requestLayout: getComputedStyle(document.querySelector("#req-pane")).display,
+          sendBackground: getComputedStyle(document.querySelector("#send")).backgroundColor,
+          pulse: getComputedStyle(document.querySelector(".res-pulse")).display,
+        };
+      })()`), {
+        background: "#12161b",
+        topbar: "52px",
+        command: "40px",
+        divider: "10px",
+        requestLayout: "flex",
+        sendBackground: "rgb(32, 38, 46)",
+        pulse: "none",
+      }, "Focus keeps surfaces quiet and accents restrained");
+      await evaluate(`(() => {
+        __verify.state.settings.general.theme = "light";
+        __verify.applyAppSettings();
+      })()`);
+      assert.equal(await evaluate(`getComputedStyle(document.documentElement).getPropertyValue("--bg-0").trim()`), "#f2f5f8");
+      await evaluate(`(() => {
+        const settings = __verify.state.settings.general;
+        settings.theme = "dark";
+        settings.accent = "ocean";
+        __verify.applyAppSettings();
+      })()`);
+      await click("#res-tabs [data-tab='raw']");
+    }
   }
-  assert.equal(new Set(signatures.map(signature => JSON.stringify(signature))).size, 4, "Styles differ in shape, type, or spacing");
+  assert.equal(new Set(signatures.map(signature => JSON.stringify(signature))).size, 6, "Styles differ in shape, type, or spacing");
+  await selectAppearance("focus");
   await evaluate("__verify.flushWorkspace().then(() => true)");
   await reload();
-  assert.equal(await evaluate("document.documentElement.dataset.appearance"), "ledger", "The style survives a workspace reload");
+  assert.equal(await evaluate("document.documentElement.dataset.appearance"), "focus", "The Focus style survives a workspace reload");
   await openAppearance();
-  assert.equal(await evaluate('document.querySelector("#pref-appearance-ledger").checked'), true);
+  assert.equal(await evaluate('document.querySelector("#pref-appearance-focus").checked'), true);
 
   await evaluate(`(() => {
     const input = document.querySelector("#pref-search");

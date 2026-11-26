@@ -6,7 +6,7 @@ const settled = async (selector = ".main") => {
   await settle();
   await evaluate(`(async () => {
     const element = document.querySelector(${JSON.stringify(selector)});
-    const running = () => element.getAnimations().filter(animation => animation.playState === "running");
+    const running = () => element.getAnimations({ subtree: true }).filter(animation => animation.playState === "running");
     for (let animations = running(); animations.length; animations = running()) {
       await Promise.allSettled(animations.map(animation => animation.finished));
     }
@@ -161,6 +161,80 @@ try {
     return url.width > 70 && url.right < drawer.left && send.top >= url.bottom;
   })()`), true, "A large sidebar and open drawer leave the URL and Send usable");
   await click("#drawer-close");
+  await settled();
+
+  await viewport(1440, 820);
+  await evaluate(`(() => {
+    __verify.state.settings.general.appearance = "classic";
+    __verify.state.settings.sidebarWidth = 276;
+    __verify.applyAppSettings();
+  })()`);
+  await settled();
+  assert.deepEqual(await evaluate(`(() => {
+    const main = getComputedStyle(document.querySelector(".main"));
+    return {
+      divider: main.getPropertyValue("--res-divider-size").trim(),
+      requestLayout: getComputedStyle(document.querySelector("#req-pane")).display,
+      sendBackground: getComputedStyle(document.querySelector("#send")).backgroundColor,
+    };
+  })()`), { divider: "6px", requestLayout: "grid", sendBackground: "rgba(0, 0, 0, 0)" });
+  if (!(await layout()).split) await click("#response-layout");
+  await settle();
+  assert.equal((await layout()).split, true, "Classic keeps the side-by-side layout");
+  await resizeByKey("ArrowLeft");
+  const classicSplit = await layout();
+  assert.ok(classicSplit.responseWidth > 380);
+  await click("#code-link");
+  await settled();
+  assert.equal(await evaluate('document.querySelector("#drawer").open'), true, "Classic keeps the Code drawer");
+  await click("#drawer-close");
+  await viewport(1080, 600);
+  const classicCompact = await layout();
+  assert.equal(classicCompact.split, false);
+  assert.deepEqual(classicCompact.toggle, { disabled: true, pressed: "false" });
+  await click("#code-link");
+  await settled();
+  assert.ok(await evaluate(`document.querySelector("#url").getBoundingClientRect().width >= 100`),
+    "Classic keeps the compact URL layout usable with the drawer open");
+  await click("#drawer-close");
+  await viewport(1440, 820);
+  await settled();
+
+  await evaluate(`(() => {
+    __verify.state.settings.general.appearance = "focus";
+    __verify.state.settings.general.theme = "dark";
+    __verify.state.settings.general.accent = "ocean";
+    __verify.state.settings.sidebarWidth = 276;
+    __verify.applyAppSettings();
+  })()`);
+  await settled();
+  assert.deepEqual(await evaluate(`(() => {
+    const main = getComputedStyle(document.querySelector(".main"));
+    return {
+      divider: main.getPropertyValue("--res-divider-size").trim(),
+      requestLayout: getComputedStyle(document.querySelector("#req-pane")).display,
+      sendBackground: getComputedStyle(document.querySelector("#send")).backgroundColor,
+    };
+  })()`), { divider: "10px", requestLayout: "flex", sendBackground: "rgb(32, 38, 46)" });
+  if (!(await layout()).split) await click("#response-layout");
+  await settle();
+  assert.equal((await layout()).split, true, "Focus keeps the side-by-side layout");
+  await resizeByKey("ArrowLeft");
+  assert.ok((await layout()).responseWidth > 380);
+  await click("#code-link");
+  await settled();
+  assert.equal(await evaluate('document.querySelector("#drawer").open'), true, "Focus keeps the Code drawer");
+  await click("#drawer-close");
+  await viewport(1080, 600);
+  const focusCompact = await layout();
+  assert.equal(focusCompact.split, false);
+  assert.deepEqual(focusCompact.toggle, { disabled: true, pressed: "false" });
+  await click("#code-link");
+  await settled();
+  assert.ok(await evaluate(`document.querySelector("#url").getBoundingClientRect().width >= 100`),
+    "Focus keeps the compact URL layout usable with the drawer open");
+  await click("#drawer-close");
+  await viewport(1440, 820);
   await settled();
 
   await evaluate(`(() => {

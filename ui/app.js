@@ -26,7 +26,7 @@ const DEFAULT_SETTINGS = {
   sidebarWidth: 276,
 };
 const SETTING_OPTIONS = {
-  appearance: ["workbench", "terminal", "studio", "ledger"],
+  appearance: ["workbench", "classic", "focus", "terminal", "studio", "ledger"],
   theme: ["light", "dark", "system"],
   accent: ["ember", "ocean", "mint", "violet", "rose", "amber", "teal", "magenta"],
   defaultMethod: ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "QUERY"],
@@ -6091,7 +6091,6 @@ const layoutSwitch = $("#response-layout");
 const LAYOUT_KEY = "postlite.responseLayout";
 const SPLIT_MIN_WIDTH = 840;
 const COMPACT_BAR_WIDTH = 520;
-const DIVIDER_SIZE = 8;
 const stackedAxis = {
   key: "postlite.responseHeight", property: "--res-h", dimension: "height",
   pointer: "clientY", min: 120, requestMin: 120, cursor: "resizing-y",
@@ -6117,8 +6116,9 @@ function responseLimits(axis) {
   const space = split
     ? addressBar.clientWidth
     : mainEl.clientHeight - $("#tabbar").offsetHeight - addressBar.offsetHeight;
+  const dividerSize = Number.parseFloat(getComputedStyle(mainEl).getPropertyValue("--res-divider-size")) || 8;
   return {
-    max: Math.max(axis.min, space - DIVIDER_SIZE - axis.requestMin),
+    max: Math.max(axis.min, space - dividerSize - axis.requestMin),
     initial: space * (split ? 0.48 : 0.5),
   };
 }

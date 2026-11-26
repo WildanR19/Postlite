@@ -8,7 +8,7 @@
       // Apply the saved appearance, theme, and accent before first paint.
       try {
         var savedAppearance = localStorage.getItem("postlite.appearance");
-        if (["workbench", "terminal", "studio", "ledger"].includes(savedAppearance))
+        if (["workbench", "classic", "focus", "terminal", "studio", "ledger"].includes(savedAppearance))
           document.documentElement.dataset.appearance = savedAppearance;
         var savedTheme = localStorage.getItem("postlite.theme");
         document.documentElement.dataset.theme =
@@ -93,6 +93,7 @@
         </div>
       </div>
       <div class="topbar-actions">
+        <span class="kbd-hint" aria-hidden="true"><kbd>Ctrl</kbd>+<kbd>&#8629;</kbd> send</span>
         <button id="import-btn" class="tool outlined" title="Import a Postman collection JSON, or drop files anywhere in the window">
           <svg class="ic" aria-hidden="true"><use href="#i-import" /></svg>
           Import
@@ -404,6 +405,15 @@
           <div class="res-empty" id="res-empty">
             <div class="res-idle">
               <svg class="ic res-idle-icon" aria-hidden="true"><use href="#i-braces" /></svg>
+              <svg class="res-pulse" viewBox="0 0 132 36" aria-hidden="true">
+                <defs>
+                  <linearGradient id="lg-classic-pulse" x1="0" y1="0" x2="1" y2="0">
+                    <stop offset="0" style="stop-color: var(--accent-hi)" />
+                    <stop offset="1" style="stop-color: var(--accent)" />
+                  </linearGradient>
+                </defs>
+                <path d="M6 18h34l9-11 14 22 9-11h54" fill="none" stroke="url(#lg-classic-pulse)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
               <b>No response yet</b>
               <span>Send a request: status, timing, and body land here.</span>
               <span class="res-idle-kbd"><kbd>Ctrl</kbd>+<kbd>&#8629;</kbd> to send</span>
@@ -587,6 +597,16 @@
                   <input id="pref-appearance-workbench" type="radio" name="pref-appearance" value="workbench" data-setting="general.appearance" aria-labelledby="appearance-name-workbench" aria-describedby="appearance-detail-workbench" checked />
                   <span class="appearance-name" id="appearance-name-workbench">Workbench</span>
                   <span class="appearance-detail" id="appearance-detail-workbench">Warm surfaces and balanced spacing.</span>
+                </label>
+                <label class="appearance-choice classic-choice">
+                  <input id="pref-appearance-classic" type="radio" name="pref-appearance" value="classic" data-setting="general.appearance" aria-labelledby="appearance-name-classic" aria-describedby="appearance-detail-classic" />
+                  <span class="appearance-name" id="appearance-name-classic">Classic</span>
+                  <span class="appearance-detail" id="appearance-detail-classic">Cool graphite surfaces, compact chrome, and the original outlined controls.</span>
+                </label>
+                <label class="appearance-choice focus-choice">
+                  <input id="pref-appearance-focus" type="radio" name="pref-appearance" value="focus" data-setting="general.appearance" aria-labelledby="appearance-name-focus" aria-describedby="appearance-detail-focus" />
+                  <span class="appearance-name" id="appearance-name-focus">Focus</span>
+                  <span class="appearance-detail" id="appearance-detail-focus">Low-contrast surfaces, generous spacing, and restrained accent color.</span>
                 </label>
                 <label class="appearance-choice terminal-choice">
                   <input id="pref-appearance-terminal" type="radio" name="pref-appearance" value="terminal" data-setting="general.appearance" aria-labelledby="appearance-name-terminal" aria-describedby="appearance-detail-terminal" />

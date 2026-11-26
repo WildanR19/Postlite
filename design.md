@@ -35,6 +35,8 @@ The Workbench style setting is independent of light and dark mode and the accent
 | Style | Structure |
 | --- | --- |
 | Workbench | Warm surfaces, balanced spacing, and the original workbench controls |
+| Classic | Cool graphite surfaces, compact chrome, outlined controls, and the original request/response styling |
+| Focus | Low-contrast surfaces, generous spacing, and restrained accent color |
 | Terminal | Compact chrome, monospace labels, square controls, and striped parameter rows |
 | Studio | Rounded panes and controls, pill-shaped tabs, and larger headings with more space |
 | Ledger | Serif headings, divided request tabs, ruled navigation rows, and a response gutter |
@@ -42,6 +44,6 @@ The Workbench style setting is independent of light and dark mode and the accent
 ## Type and movement
 
 - Use the system sans stack for controls and headings and the mono stack for URLs, code, methods, and metrics. Status metrics use tabular numbers.
-- Use weight, surface contrast, and short rules for hierarchy. The Send button has a solid accent fill. The selected tab and focused controls use the active accent.
+- Use weight, surface contrast, and short rules for hierarchy. The Send button has a solid accent fill in Workbench, outlined accent in Classic, and a quiet neutral fill with an accent outline in Focus. The selected tab and focused controls use the active accent.
 - Keep the shell flat. Use shadows on the floating popovers and drawers. The empty workspace can use the quiet dot pattern.
 - Keep hover and pane transitions at 140 ms and 200 ms. Respect the system reduced-motion preference and expose both resize handles to keyboard users.
