@@ -48,7 +48,17 @@ jobs:
         with:
           tagName: v__VERSION__
           releaseName: 'Postlite v__VERSION__'
-          releaseBody: 'See the assets below to download this version. Windows: installer (*-setup.exe) or portable (*-portable.exe, no install needed). Linux: AppImage (portable), .deb (Debian/Ubuntu), .rpm (Fedora/RHEL). Builds are unsigned.'
+          releaseBody: |
+            ## What's new
+            - Add the Classic appearance, bringing back the v0.2.8 visual language on the current pane model.
+            - Add the Focus appearance with low-contrast surfaces, generous spacing, and restrained accent color.
+            - Keep request tabs the same height when the strip overflows; wheel and trackpad scrolling remain available.
+
+            ## Reliability
+            - Expand automated appearance and layout checks across all six styles, split/stacked panes, compact mode, and drawers.
+
+            ## Downloads
+            Windows: installer (*-setup.exe) or portable (*-portable.exe, no install needed). Linux: AppImage (portable), .deb (Debian/Ubuntu), or .rpm (Fedora/RHEL). Builds are unsigned.
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
